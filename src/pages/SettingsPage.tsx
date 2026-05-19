@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Plus } from 'lucide-react'
 import { toast } from 'sonner'
+import { logDashboardActivity } from '@/lib/audit'
 
 export function SettingsPage() {
   const { role } = useAuth()
@@ -54,6 +55,7 @@ function WarehouseSettings({ isAdmin }: { isAdmin: boolean }) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [newName, setNewName] = useState('')
   const queryClient = useQueryClient()
+  const { user } = useAuth()
 
   const { data: locations } = useQuery({
     queryKey: ['warehouse-locations-all'],
@@ -70,8 +72,16 @@ function WarehouseSettings({ isAdmin }: { isAdmin: boolean }) {
       const { error } = await supabase.from('warehouse_locations').insert({ name: newName.trim() })
       if (error) throw error
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['warehouse-locations'] })
+      if (user) {
+        await logDashboardActivity({
+          entityType: 'warehouse_location',
+          action: 'create',
+          userId: user.id,
+          description: `Added warehouse location ${newName.trim()}`,
+        })
+      }
       toast.success('Location added')
       setNewName('')
       setDialogOpen(false)
@@ -85,8 +95,16 @@ function WarehouseSettings({ isAdmin }: { isAdmin: boolean }) {
       const { error } = await supabase.from('warehouse_locations').update({ status: newStatus }).eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['warehouse-locations'] })
+      if (user) {
+        await logDashboardActivity({
+          entityType: 'warehouse_location',
+          action: 'update',
+          userId: user.id,
+          description: 'Updated warehouse location status',
+        })
+      }
       toast.success('Status updated')
     },
   })
@@ -163,6 +181,7 @@ function ChannelSettings({ isAdmin }: { isAdmin: boolean }) {
   const [newName, setNewName] = useState('')
   const [newCommission, setNewCommission] = useState('15')
   const queryClient = useQueryClient()
+  const { user } = useAuth()
 
   const { data: channels } = useQuery({
     queryKey: ['sales-channels-all'],
@@ -182,8 +201,16 @@ function ChannelSettings({ isAdmin }: { isAdmin: boolean }) {
       })
       if (error) throw error
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['sales-channels'] })
+      if (user) {
+        await logDashboardActivity({
+          entityType: 'sales_channel',
+          action: 'create',
+          userId: user.id,
+          description: `Added sales channel ${newName.trim()}`,
+        })
+      }
       toast.success('Channel added')
       setNewName('')
       setNewCommission('15')
@@ -197,8 +224,16 @@ function ChannelSettings({ isAdmin }: { isAdmin: boolean }) {
       const { error } = await supabase.from('sales_channels').update({ commission_percent: value }).eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['sales-channels'] })
+      if (user) {
+        await logDashboardActivity({
+          entityType: 'sales_channel',
+          action: 'update',
+          userId: user.id,
+          description: 'Updated channel commission',
+        })
+      }
       toast.success('Commission updated')
     },
   })

@@ -117,6 +117,7 @@ export function ProductDetailPage() {
         <div className="flex-1 min-w-0">
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight truncate">{product.name}</h1>
           <p className="text-muted-foreground font-mono text-sm">{product.sku}</p>
+          <p className="text-muted-foreground font-mono text-xs">ID: {product.product_code ?? product.id.slice(0, 8)}</p>
         </div>
         {product.image_url && (
           <img src={product.image_url} alt={product.name} className="h-12 w-12 sm:h-16 sm:w-16 rounded-lg object-cover border" />

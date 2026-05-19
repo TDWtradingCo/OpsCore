@@ -12,19 +12,23 @@ import { exportToCSV } from '@/lib/csv'
 import { toast } from 'sonner'
 
 export function ActivityLogPage() {
-  const [movementType, setMovementType] = useState<string>('all')
+  const [entityType, setEntityType] = useState<string>('all')
+  const [actionType, setActionType] = useState<string>('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
 
-  const { data: movements, isLoading } = useQuery({
-    queryKey: ['activity-log', movementType, dateFrom, dateTo],
+  const { data: activityLogs, isLoading } = useQuery({
+    queryKey: ['dashboard-activity-log', entityType, actionType, dateFrom, dateTo],
     queryFn: async () => {
       let query = supabase
-        .from('inventory_movements')
-        .select('*, product:products(name, sku), source_location:warehouse_locations!inventory_movements_source_location_id_fkey(name), destination_location:warehouse_locations!inventory_movements_destination_location_id_fkey(name), created_by_user:users!inventory_movements_created_by_fkey(full_name)')
+        .from('dashboard_activity_log')
+        .select('*, user:users(full_name, email)')
 
-      if (movementType !== 'all') {
-        query = query.eq('movement_type', movementType)
+      if (entityType !== 'all') {
+        query = query.eq('entity_type', entityType)
+      }
+      if (actionType !== 'all') {
+        query = query.eq('action', actionType)
       }
       if (dateFrom) {
         query = query.gte('created_at', dateFrom)
@@ -35,16 +39,15 @@ export function ActivityLogPage() {
 
       const { data, error } = await query.order('created_at', { ascending: false }).limit(200)
       if (error) throw error
-      return data
+      return data ?? []
     },
   })
 
   const typeColors: Record<string, string> = {
-    adjustment_in: 'success',
-    adjustment_out: 'destructive',
-    transfer: 'default',
-    purchase: 'success',
-    sale: 'secondary',
+    create: 'success',
+    update: 'default',
+    delete: 'destructive',
+    complete: 'secondary',
   }
 
   return (
@@ -55,52 +58,62 @@ export function ActivityLogPage() {
           <p className="text-muted-foreground">Track all inventory movements and changes</p>
         </div>
         <Button variant="outline" size="sm" onClick={() => {
-          if (!movements?.length) return
-          exportToCSV(movements.map((m: any) => ({
+          if (!activityLogs?.length) return
+          exportToCSV(activityLogs.map((m: any) => ({
             date: new Date(m.created_at).toLocaleString(),
-            product: m.product?.name ?? '',
-            sku: m.product?.sku ?? '',
-            type: m.movement_type,
-            from: m.source_location?.name ?? '',
-            to: m.destination_location?.name ?? '',
-            quantity: m.quantity,
-            reason: m.reason ?? '',
-            user: m.created_by_user?.full_name ?? '',
+            entity: m.entity_type,
+            action: m.action,
+            description: m.description ?? '',
+            user: m.user?.full_name ?? m.user?.email ?? '',
+            metadata: m.metadata ? JSON.stringify(m.metadata) : '',
           })), 'activity-log', [
             { key: 'date', header: 'Date' },
-            { key: 'product', header: 'Product' },
-            { key: 'sku', header: 'SKU' },
-            { key: 'type', header: 'Type' },
-            { key: 'from', header: 'From' },
-            { key: 'to', header: 'To' },
-            { key: 'quantity', header: 'Quantity' },
-            { key: 'reason', header: 'Reason' },
+            { key: 'entity', header: 'Entity' },
+            { key: 'action', header: 'Action' },
+            { key: 'description', header: 'Description' },
             { key: 'user', header: 'User' },
+            { key: 'metadata', header: 'Metadata' },
           ])
           toast.success('Activity log exported')
-        }} disabled={!movements?.length}>
+        }} disabled={!activityLogs?.length}>
           <Download className="h-4 w-4 mr-1" />
           Export
         </Button>
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">
-        <Select value={movementType} onValueChange={setMovementType}>
+        <Select value={entityType} onValueChange={setEntityType}>
           <SelectTrigger className="w-full sm:w-[160px]">
-            <SelectValue placeholder="Type" />
+            <SelectValue placeholder="Entity" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Types</SelectItem>
-            <SelectItem value="adjustment_in">Adjustment In</SelectItem>
-            <SelectItem value="adjustment_out">Adjustment Out</SelectItem>
-            <SelectItem value="transfer">Transfer</SelectItem>
+            <SelectItem value="all">All Entities</SelectItem>
+            <SelectItem value="product">Product</SelectItem>
             <SelectItem value="purchase">Purchase</SelectItem>
-            <SelectItem value="sale">Sale</SelectItem>
+            <SelectItem value="purchase_line_item">Purchase Line Item</SelectItem>
+            <SelectItem value="purchase_additional_cost">Additional Cost</SelectItem>
+            <SelectItem value="purchase_allocation">Allocation</SelectItem>
+            <SelectItem value="inventory_adjustment">Inventory Adjustment</SelectItem>
+            <SelectItem value="inventory_transfer">Inventory Transfer</SelectItem>
+            <SelectItem value="warehouse_location">Warehouse Location</SelectItem>
+            <SelectItem value="sales_channel">Sales Channel</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={actionType} onValueChange={setActionType}>
+          <SelectTrigger className="w-full sm:w-[160px]">
+            <SelectValue placeholder="Action" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Actions</SelectItem>
+            <SelectItem value="create">Create</SelectItem>
+            <SelectItem value="update">Update</SelectItem>
+            <SelectItem value="delete">Delete</SelectItem>
+            <SelectItem value="complete">Complete</SelectItem>
           </SelectContent>
         </Select>
         <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-[calc(50%-6px)] sm:w-[160px]" />
         <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-[calc(50%-6px)] sm:w-[160px]" />
-        <span className="text-sm text-muted-foreground">{movements?.length ?? 0} entries</span>
+        <span className="text-sm text-muted-foreground">{activityLogs?.length ?? 0} entries</span>
       </div>
 
       {isLoading ? (
@@ -114,42 +127,33 @@ export function ActivityLogPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Date</TableHead>
-                  <TableHead>Product</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>From</TableHead>
-                  <TableHead>To</TableHead>
-                  <TableHead className="text-right">Qty</TableHead>
-                  <TableHead>Reason</TableHead>
+                  <TableHead>Entity</TableHead>
+                  <TableHead>Action</TableHead>
+                  <TableHead>Description</TableHead>
                   <TableHead>User</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {movements?.length === 0 ? (
+                {activityLogs?.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
+                    <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
                       No activity found
                     </TableCell>
                   </TableRow>
                 ) : (
-                  movements?.map((mov: any) => (
-                    <TableRow key={mov.id}>
+                  activityLogs?.map((log: any) => (
+                    <TableRow key={log.id}>
                       <TableCell className="text-sm whitespace-nowrap">
-                        {new Date(mov.created_at).toLocaleString()}
+                        {new Date(log.created_at).toLocaleString()}
                       </TableCell>
+                      <TableCell className="font-medium capitalize">{(log.entity_type ?? '').replace('_', ' ')}</TableCell>
                       <TableCell>
-                        <div className="font-medium">{mov.product?.name}</div>
-                        <div className="text-xs text-muted-foreground font-mono">{mov.product?.sku}</div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={(typeColors[mov.movement_type] as any) ?? 'default'}>
-                          {mov.movement_type.replace('_', ' ')}
+                        <Badge variant={(typeColors[log.action] as any) ?? 'default'}>
+                          {(log.action ?? '').replace('_', ' ')}
                         </Badge>
                       </TableCell>
-                      <TableCell>{mov.source_location?.name ?? '—'}</TableCell>
-                      <TableCell>{mov.destination_location?.name ?? '—'}</TableCell>
-                      <TableCell className="text-right font-mono">{mov.quantity}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">{mov.reason ?? '—'}</TableCell>
-                      <TableCell className="text-sm">{mov.created_by_user?.full_name ?? '—'}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground max-w-[320px] truncate">{log.description ?? '—'}</TableCell>
+                      <TableCell className="text-sm">{log.user?.full_name ?? log.user?.email ?? '—'}</TableCell>
                     </TableRow>
                   ))
                 )}

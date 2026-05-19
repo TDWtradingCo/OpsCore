@@ -13,6 +13,8 @@ import { ProductForm } from '@/components/products/ProductForm'
 import { toast } from 'sonner'
 import { exportToCSV, parseCSV } from '@/lib/csv'
 import type { ProductFormData } from '@/lib/validations'
+import { logDashboardActivity } from '@/lib/audit'
+import { useAuth } from '@/contexts/AuthContext'
 
 export function ProductsPage() {
   const [search, setSearch] = useState('')
@@ -21,6 +23,7 @@ export function ProductsPage() {
   const [importing, setImporting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const queryClient = useQueryClient()
+  const { user } = useAuth()
 
   const { data: products, isLoading } = useQuery({
     queryKey: ['products', search, statusFilter],
@@ -68,9 +71,19 @@ export function ProductsPage() {
       if (error) throw error
       return data
     },
-    onSuccess: () => {
+    onSuccess: async (data) => {
       queryClient.invalidateQueries({ queryKey: ['products'] })
       setDialogOpen(false)
+      if (user) {
+        await logDashboardActivity({
+          entityType: 'product',
+          action: 'create',
+          userId: user.id,
+          entityId: data.id,
+          description: `Created product ${data.name} (${data.sku})`,
+          metadata: { sku: data.sku, product_code: data.product_code },
+        })
+      }
       toast.success('Product created successfully')
     },
     onError: (error) => {
@@ -230,6 +243,7 @@ export function ProductsPage() {
             <TableHeader>
               <TableRow>
                 <TableHead className="w-[50px]"></TableHead>
+                <TableHead>ID</TableHead>
                 <TableHead>Name</TableHead>
                 <TableHead>SKU</TableHead>
                 <TableHead>Brand</TableHead>
@@ -240,7 +254,7 @@ export function ProductsPage() {
             <TableBody>
               {products?.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                     No products found. Create your first product to get started.
                   </TableCell>
                 </TableRow>
@@ -253,6 +267,9 @@ export function ProductsPage() {
                       ) : (
                         <div className="h-8 w-8 rounded bg-muted flex items-center justify-center text-xs text-muted-foreground">{product.name?.charAt(0)?.toUpperCase()}</div>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      <span className="font-mono text-xs text-muted-foreground">{product.product_code ?? product.id.slice(0, 8)}</span>
                     </TableCell>
                     <TableCell>
                       <Link

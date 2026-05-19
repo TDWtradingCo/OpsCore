@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
+import { Textarea } from '@/components/ui/textarea'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
@@ -13,12 +14,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ArrowRightLeft, TrendingUp, Search, Download } from 'lucide-react'
 import { exportToCSV } from '@/lib/csv'
 import { toast } from 'sonner'
+import { logDashboardActivity } from '@/lib/audit'
 
 export function InventoryPage() {
   const [search, setSearch] = useState('')
   const [warehouseFilter, setWarehouseFilter] = useState<string>('all')
   const [adjustDialogOpen, setAdjustDialogOpen] = useState(false)
   const [transferDialogOpen, setTransferDialogOpen] = useState(false)
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false)
 
   const { data: warehouseLocations } = useQuery({
     queryKey: ['warehouse-locations-filter'],
@@ -156,6 +159,17 @@ export function InventoryPage() {
                 <DialogTitle>Inventory Transfer</DialogTitle>
               </DialogHeader>
               <TransferForm onSuccess={() => setTransferDialogOpen(false)} />
+            </DialogContent>
+          </Dialog>
+          <Dialog open={bulkDialogOpen} onOpenChange={setBulkDialogOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline">Bulk Update</Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Bulk Inventory Update</DialogTitle>
+              </DialogHeader>
+              <BulkInventoryUpdateForm onSuccess={() => setBulkDialogOpen(false)} />
             </DialogContent>
           </Dialog>
         </div>
@@ -449,6 +463,14 @@ function AdjustmentForm({ onSuccess }: { onSuccess: () => void }) {
       queryClient.invalidateQueries({ queryKey: ['inventory'] })
       queryClient.invalidateQueries({ queryKey: ['inventory-movements'] })
       queryClient.invalidateQueries({ queryKey: ['inventory-total'] })
+      if (user) {
+        void logDashboardActivity({
+          entityType: 'inventory_adjustment',
+          action: 'create',
+          userId: user.id,
+          description: `Applied inventory ${adjustmentType} adjustment`,
+        })
+      }
       toast.success('Inventory adjusted successfully')
       onSuccess()
     },
@@ -620,6 +642,14 @@ function TransferForm({ onSuccess }: { onSuccess: () => void }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] })
       queryClient.invalidateQueries({ queryKey: ['inventory-movements'] })
+      if (user) {
+        void logDashboardActivity({
+          entityType: 'inventory_transfer',
+          action: 'create',
+          userId: user.id,
+          description: 'Completed inventory transfer',
+        })
+      }
       toast.success('Transfer completed successfully')
       onSuccess()
     },
@@ -702,6 +732,100 @@ function TransferForm({ onSuccess }: { onSuccess: () => void }) {
         disabled={!productId || !sourceId || !destId || !quantity || sourceId === destId || transferMutation.isPending}
       >
         {transferMutation.isPending ? 'Processing...' : 'Complete Transfer'}
+      </Button>
+    </div>
+  )
+}
+
+function BulkInventoryUpdateForm({ onSuccess }: { onSuccess: () => void }) {
+  const [payload, setPayload] = useState('')
+  const queryClient = useQueryClient()
+  const { user } = useAuth()
+
+  const bulkUpdate = useMutation({
+    mutationFn: async () => {
+      const lines = payload
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+
+      if (lines.length === 0) throw new Error('Enter at least one row')
+
+      const { data: products, error: productsError } = await supabase
+        .from('products')
+        .select('id, sku')
+      if (productsError) throw productsError
+
+      const { data: locations, error: locationsError } = await supabase
+        .from('warehouse_locations')
+        .select('id, name')
+      if (locationsError) throw locationsError
+
+      const productBySku = new Map((products ?? []).map((p) => [p.sku.toLowerCase(), p.id]))
+      const locationByName = new Map((locations ?? []).map((l) => [l.name.toLowerCase(), l.id]))
+
+      let updated = 0
+      for (const line of lines) {
+        const [rawSku, rawLocation, rawQty] = line.split(',').map((part) => part?.trim())
+        if (!rawSku || !rawLocation || !rawQty) continue
+
+        const productId = productBySku.get(rawSku.toLowerCase())
+        const locationId = locationByName.get(rawLocation.toLowerCase())
+        const quantity = Number(rawQty)
+
+        if (!productId || !locationId || !Number.isFinite(quantity) || quantity < 0) continue
+
+        const { data: existing } = await supabase
+          .from('inventory')
+          .select('id')
+          .eq('product_id', productId)
+          .eq('warehouse_location_id', locationId)
+          .single()
+
+        if (existing) {
+          const { error } = await supabase.from('inventory').update({ quantity }).eq('id', existing.id)
+          if (!error) updated++
+          continue
+        }
+
+        const { error } = await supabase
+          .from('inventory')
+          .insert({ product_id: productId, warehouse_location_id: locationId, quantity })
+        if (!error) updated++
+      }
+
+      return { updated }
+    },
+    onSuccess: async ({ updated }) => {
+      queryClient.invalidateQueries({ queryKey: ['inventory'] })
+      if (user) {
+        await logDashboardActivity({
+          entityType: 'inventory',
+          action: 'update',
+          userId: user.id,
+          description: `Bulk updated inventory rows: ${updated}`,
+          metadata: { rows_updated: updated },
+        })
+      }
+      toast.success(`Bulk update complete (${updated} row${updated === 1 ? '' : 's'})`)
+      onSuccess()
+    },
+    onError: (error) => toast.error(error.message),
+  })
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Enter one row per line in this format: <span className="font-mono">SKU,Warehouse Name,Quantity</span>
+      </p>
+      <Textarea
+        value={payload}
+        onChange={(e) => setPayload(e.target.value)}
+        placeholder="SKU-001,WFS CA,25"
+        className="h-36"
+      />
+      <Button className="w-full" onClick={() => bulkUpdate.mutate()} disabled={bulkUpdate.isPending}>
+        {bulkUpdate.isPending ? 'Updating...' : 'Run Bulk Update'}
       </Button>
     </div>
   )

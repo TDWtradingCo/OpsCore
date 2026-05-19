@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Plus, CheckCircle } from 'lucide-react'
+import { ArrowLeft, Plus, CheckCircle, Pencil, Trash2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { formatCurrency } from '@/lib/utils'
 import { toast } from 'sonner'
+import { logDashboardActivity } from '@/lib/audit'
 
 export function PurchaseDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -22,6 +23,19 @@ export function PurchaseDetailPage() {
   const { user } = useAuth()
   const [lineDialogOpen, setLineDialogOpen] = useState(false)
   const [costDialogOpen, setCostDialogOpen] = useState(false)
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [editInvoiceNumber, setEditInvoiceNumber] = useState('')
+  const [editSupplierId, setEditSupplierId] = useState('')
+  const [editInvoiceDate, setEditInvoiceDate] = useState('')
+  const [editNotes, setEditNotes] = useState('')
+
+  const { data: suppliers } = useQuery({
+    queryKey: ['suppliers-active-for-purchase-detail'],
+    queryFn: async () => {
+      const { data } = await supabase.from('suppliers').select('id, name').eq('status', 'active').order('name')
+      return data ?? []
+    },
+  })
 
   const { data: purchase, isLoading } = useQuery({
     queryKey: ['purchase', id],
@@ -153,16 +167,174 @@ export function PurchaseDetailPage() {
         .eq('id', id!)
       if (error) throw error
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['purchase', id] })
       queryClient.invalidateQueries({ queryKey: ['purchase-line-items', id] })
       queryClient.invalidateQueries({ queryKey: ['inventory'] })
       queryClient.invalidateQueries({ queryKey: ['purchases'] })
+      if (user && purchase) {
+        await logDashboardActivity({
+          entityType: 'purchase',
+          action: 'complete',
+          userId: user.id,
+          entityId: purchase.id,
+          description: `Completed purchase invoice ${purchase.invoice_number}`,
+        })
+      }
       toast.success('Purchase completed. Inventory updated and landed costs calculated.')
     },
     onError: (error) => {
       toast.error(error.message)
     },
+  })
+
+  const updatePurchase = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase
+        .from('purchases')
+        .update({
+          invoice_number: editInvoiceNumber,
+          supplier_id: editSupplierId,
+          invoice_date: editInvoiceDate,
+          notes: editNotes || null,
+        })
+        .eq('id', id!)
+        .eq('status', 'draft')
+        .select('*, supplier:suppliers(name)')
+        .single()
+      if (error) throw error
+      return data
+    },
+    onSuccess: async (updated) => {
+      queryClient.invalidateQueries({ queryKey: ['purchase', id] })
+      queryClient.invalidateQueries({ queryKey: ['purchases'] })
+      setEditDialogOpen(false)
+      if (user) {
+        await logDashboardActivity({
+          entityType: 'purchase',
+          action: 'update',
+          userId: user.id,
+          entityId: updated.id,
+          description: `Updated purchase invoice ${updated.invoice_number}`,
+        })
+      }
+      toast.success('Invoice updated')
+    },
+    onError: (error) => toast.error(error.message),
+  })
+
+  const deletePurchase = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase
+        .from('purchases')
+        .delete()
+        .eq('id', id!)
+        .eq('status', 'draft')
+      if (error) throw error
+    },
+    onSuccess: async () => {
+      if (user && purchase) {
+        await logDashboardActivity({
+          entityType: 'purchase',
+          action: 'delete',
+          userId: user.id,
+          entityId: purchase.id,
+          description: `Deleted purchase invoice ${purchase.invoice_number}`,
+        })
+      }
+      toast.success('Invoice deleted')
+      navigate('/purchases')
+    },
+    onError: (error) => toast.error(error.message),
+  })
+
+  const updateLineItem = useMutation({
+    mutationFn: async ({ itemId, quantity, unitCost, taxPercent }: { itemId: string; quantity: number; unitCost: number; taxPercent: number }) => {
+      const taxAmount = Number(((quantity * unitCost * taxPercent) / 100).toFixed(2))
+      const { error } = await supabase
+        .from('purchase_line_items')
+        .update({ quantity, unit_cost: unitCost, tax_percent: taxPercent, tax_amount: taxAmount })
+        .eq('id', itemId)
+      if (error) throw error
+    },
+    onSuccess: async () => {
+      queryClient.invalidateQueries({ queryKey: ['purchase-line-items', id] })
+      if (user && purchase) {
+        await logDashboardActivity({
+          entityType: 'purchase_line_item',
+          action: 'update',
+          userId: user.id,
+          entityId: id,
+          description: `Edited a line item in invoice ${purchase.invoice_number}`,
+        })
+      }
+      toast.success('Line item updated')
+    },
+    onError: (error) => toast.error(error.message),
+  })
+
+  const deleteLineItem = useMutation({
+    mutationFn: async (itemId: string) => {
+      const { error } = await supabase.from('purchase_line_items').delete().eq('id', itemId)
+      if (error) throw error
+    },
+    onSuccess: async () => {
+      queryClient.invalidateQueries({ queryKey: ['purchase-line-items', id] })
+      queryClient.invalidateQueries({ queryKey: ['purchase-allocations', id] })
+      if (user && purchase) {
+        await logDashboardActivity({
+          entityType: 'purchase_line_item',
+          action: 'delete',
+          userId: user.id,
+          entityId: id,
+          description: `Deleted a line item from invoice ${purchase.invoice_number}`,
+        })
+      }
+      toast.success('Line item deleted')
+    },
+    onError: (error) => toast.error(error.message),
+  })
+
+  const updateAdditionalCost = useMutation({
+    mutationFn: async ({ costId, amount, notes }: { costId: string; amount: number; notes: string | null }) => {
+      const { error } = await supabase.from('purchase_additional_costs').update({ amount, notes }).eq('id', costId)
+      if (error) throw error
+    },
+    onSuccess: async () => {
+      queryClient.invalidateQueries({ queryKey: ['purchase-additional-costs', id] })
+      if (user && purchase) {
+        await logDashboardActivity({
+          entityType: 'purchase_additional_cost',
+          action: 'update',
+          userId: user.id,
+          entityId: id,
+          description: `Updated additional cost on invoice ${purchase.invoice_number}`,
+        })
+      }
+      toast.success('Additional cost updated')
+    },
+    onError: (error) => toast.error(error.message),
+  })
+
+  const deleteAdditionalCost = useMutation({
+    mutationFn: async (costId: string) => {
+      const { error } = await supabase.from('purchase_additional_costs').delete().eq('id', costId)
+      if (error) throw error
+    },
+    onSuccess: async () => {
+      queryClient.invalidateQueries({ queryKey: ['purchase-additional-costs', id] })
+      if (user && purchase) {
+        await logDashboardActivity({
+          entityType: 'purchase_additional_cost',
+          action: 'delete',
+          userId: user.id,
+          entityId: id,
+          description: `Deleted additional cost on invoice ${purchase.invoice_number}`,
+        })
+      }
+      toast.success('Additional cost deleted')
+    },
+    onError: (error) => toast.error(error.message),
   })
 
   if (isLoading) {
@@ -174,6 +346,14 @@ export function PurchaseDetailPage() {
   }
 
   if (!purchase) return <div>Purchase not found</div>
+
+  const openEditInvoice = () => {
+    setEditInvoiceNumber(purchase.invoice_number)
+    setEditSupplierId(purchase.supplier_id)
+    setEditInvoiceDate(purchase.invoice_date)
+    setEditNotes(purchase.notes ?? '')
+    setEditDialogOpen(true)
+  }
 
   const isDraft = purchase.status === 'draft'
   const subtotal = lineItems?.reduce((sum, li) => sum + li.unit_cost * li.quantity, 0) ?? 0
@@ -196,12 +376,70 @@ export function PurchaseDetailPage() {
           {purchase.status}
         </Badge>
         {isDraft && (
+          <Button size="sm" variant="outline" onClick={openEditInvoice}>
+            <Pencil className="h-4 w-4 mr-2" />
+            Edit Invoice
+          </Button>
+        )}
+        {isDraft && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-destructive"
+            onClick={() => {
+              if (!confirm(`Delete invoice ${purchase.invoice_number}? This cannot be undone.`)) return
+              deletePurchase.mutate()
+            }}
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Delete
+          </Button>
+        )}
+        {isDraft && (
           <Button size="sm" onClick={() => completePurchase.mutate()} disabled={completePurchase.isPending}>
             <CheckCircle className="h-4 w-4 mr-2" />
             {completePurchase.isPending ? 'Processing...' : 'Complete Purchase'}
           </Button>
         )}
       </div>
+
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Purchase Invoice</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Invoice Number *</Label>
+              <Input value={editInvoiceNumber} onChange={(e) => setEditInvoiceNumber(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Supplier *</Label>
+              <Select value={editSupplierId} onValueChange={setEditSupplierId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select supplier" />
+                </SelectTrigger>
+                <SelectContent>
+                  {suppliers?.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Invoice Date *</Label>
+              <Input type="date" value={editInvoiceDate} onChange={(e) => setEditInvoiceDate(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Notes</Label>
+              <Input value={editNotes} onChange={(e) => setEditNotes(e.target.value)} />
+            </div>
+            <Button className="w-full" onClick={() => updatePurchase.mutate()} disabled={updatePurchase.isPending}>
+              {updatePurchase.isPending ? 'Saving...' : 'Save Changes'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -254,7 +492,12 @@ export function PurchaseDetailPage() {
                 <DialogHeader>
                   <DialogTitle>Add Line Item</DialogTitle>
                 </DialogHeader>
-                <AddLineItemForm purchaseId={id!} onSuccess={() => setLineDialogOpen(false)} />
+                <AddLineItemForm
+                  purchaseId={id!}
+                  invoiceNumber={purchase.invoice_number}
+                  userId={user?.id}
+                  onSuccess={() => setLineDialogOpen(false)}
+                />
               </DialogContent>
             </Dialog>
           )}
@@ -270,12 +513,13 @@ export function PurchaseDetailPage() {
                 <TableHead>Tax Type</TableHead>
                 <TableHead className="text-right">Line Total</TableHead>
                 <TableHead className="text-right">Landed Cost</TableHead>
+                {isDraft && <TableHead className="text-right">Actions</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
               {lineItems?.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground">
+                  <TableCell colSpan={isDraft ? 8 : 7} className="text-center text-muted-foreground">
                     No line items. Add products to this purchase.
                   </TableCell>
                 </TableRow>
@@ -300,6 +544,37 @@ export function PurchaseDetailPage() {
                     <TableCell className="text-right">
                       {item.landed_unit_cost ? formatCurrency(item.landed_unit_cost) : '—'}
                     </TableCell>
+                    {isDraft && (
+                      <TableCell className="text-right">
+                        <div className="inline-flex items-center gap-1">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8"
+                            onClick={() => {
+                              const quantity = Number(prompt('Quantity', String(item.quantity)) ?? item.quantity)
+                              const unitCost = Number(prompt('Unit cost', String(item.unit_cost)) ?? item.unit_cost)
+                              const taxPercent = Number(prompt('Tax %', String(item.tax_percent)) ?? item.tax_percent)
+                              if (!Number.isFinite(quantity) || !Number.isFinite(unitCost) || !Number.isFinite(taxPercent)) return
+                              updateLineItem.mutate({ itemId: item.id, quantity, unitCost, taxPercent })
+                            }}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-destructive"
+                            onClick={() => {
+                              if (!confirm('Delete this line item?')) return
+                              deleteLineItem.mutate(item.id)
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))
               )}
@@ -323,7 +598,12 @@ export function PurchaseDetailPage() {
                 <DialogHeader>
                   <DialogTitle>Add Additional Cost</DialogTitle>
                 </DialogHeader>
-                <AddCostForm purchaseId={id!} onSuccess={() => setCostDialogOpen(false)} />
+                <AddCostForm
+                  purchaseId={id!}
+                  invoiceNumber={purchase.invoice_number}
+                  userId={user?.id}
+                  onSuccess={() => setCostDialogOpen(false)}
+                />
               </DialogContent>
             </Dialog>
           )}
@@ -335,12 +615,13 @@ export function PurchaseDetailPage() {
                 <TableHead>Type</TableHead>
                 <TableHead className="text-right">Amount</TableHead>
                 <TableHead>Notes</TableHead>
+                {isDraft && <TableHead className="text-right">Actions</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
               {additionalCosts?.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={3} className="text-center text-muted-foreground">
+                  <TableCell colSpan={isDraft ? 4 : 3} className="text-center text-muted-foreground">
                     No additional costs
                   </TableCell>
                 </TableRow>
@@ -350,6 +631,36 @@ export function PurchaseDetailPage() {
                     <TableCell className="capitalize">{cost.cost_type.replace('_', ' ')}</TableCell>
                     <TableCell className="text-right font-medium">{formatCurrency(cost.amount)}</TableCell>
                     <TableCell className="text-muted-foreground">{cost.notes ?? '—'}</TableCell>
+                    {isDraft && (
+                      <TableCell className="text-right">
+                        <div className="inline-flex items-center gap-1">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8"
+                            onClick={() => {
+                              const amount = Number(prompt('Amount', String(cost.amount)) ?? cost.amount)
+                              const notesInput = prompt('Notes', cost.notes ?? '')
+                              if (!Number.isFinite(amount)) return
+                              updateAdditionalCost.mutate({ costId: cost.id, amount, notes: notesInput || null })
+                            }}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-destructive"
+                            onClick={() => {
+                              if (!confirm('Delete this additional cost?')) return
+                              deleteAdditionalCost.mutate(cost.id)
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))
               )}
@@ -366,7 +677,13 @@ export function PurchaseDetailPage() {
           </CardHeader>
           <CardContent>
             {lineItems.map((li: any) => (
-              <AllocationSection key={li.id} lineItem={li} purchaseId={id!} />
+              <AllocationSection
+                key={li.id}
+                lineItem={li}
+                purchaseId={id!}
+                invoiceNumber={purchase.invoice_number}
+                userId={user?.id}
+              />
             ))}
           </CardContent>
         </Card>
@@ -375,7 +692,17 @@ export function PurchaseDetailPage() {
   )
 }
 
-function AddLineItemForm({ purchaseId, onSuccess }: { purchaseId: string; onSuccess: () => void }) {
+function AddLineItemForm({
+  purchaseId,
+  invoiceNumber,
+  userId,
+  onSuccess,
+}: {
+  purchaseId: string
+  invoiceNumber: string
+  userId?: string
+  onSuccess: () => void
+}) {
   const [productId, setProductId] = useState('')
   const [quantity, setQuantity] = useState('')
   const [unitCost, setUnitCost] = useState('')
@@ -405,13 +732,34 @@ function AddLineItemForm({ purchaseId, onSuccess }: { purchaseId: string; onSucc
       })
       if (error) throw error
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['purchase-line-items', purchaseId] })
+      if (userId) {
+        await logDashboardActivity({
+          entityType: 'purchase_line_item',
+          action: 'create',
+          userId,
+          entityId: purchaseId,
+          description: `Added line item to invoice ${invoiceNumber}`,
+        })
+      }
       toast.success('Line item added')
       onSuccess()
     },
     onError: (error) => toast.error(error.message),
   })
+
+  useEffect(() => {
+    const qty = Number(quantity)
+    const cost = Number(unitCost)
+    const percent = Number(taxPercent)
+    if (!Number.isFinite(qty) || !Number.isFinite(cost) || !Number.isFinite(percent)) {
+      setTaxAmount('0')
+      return
+    }
+    const calculated = ((qty * cost * percent) / 100).toFixed(2)
+    setTaxAmount(calculated)
+  }, [quantity, unitCost, taxPercent])
 
   return (
     <div className="space-y-4">
@@ -445,7 +793,7 @@ function AddLineItemForm({ purchaseId, onSuccess }: { purchaseId: string; onSucc
         </div>
         <div className="space-y-2">
           <Label>Tax Amount</Label>
-          <Input type="number" step="0.01" value={taxAmount} onChange={(e) => setTaxAmount(e.target.value)} onFocus={(e) => e.target.select()} />
+          <Input type="number" step="0.01" value={taxAmount} readOnly className="bg-muted" />
         </div>
       </div>
       <div className="space-y-2">
@@ -467,7 +815,17 @@ function AddLineItemForm({ purchaseId, onSuccess }: { purchaseId: string; onSucc
   )
 }
 
-function AddCostForm({ purchaseId, onSuccess }: { purchaseId: string; onSuccess: () => void }) {
+function AddCostForm({
+  purchaseId,
+  invoiceNumber,
+  userId,
+  onSuccess,
+}: {
+  purchaseId: string
+  invoiceNumber: string
+  userId?: string
+  onSuccess: () => void
+}) {
   const [costType, setCostType] = useState<'shipping' | 'customs_duties' | 'other'>('shipping')
   const [amount, setAmount] = useState('')
   const [notes, setNotes] = useState('')
@@ -483,8 +841,17 @@ function AddCostForm({ purchaseId, onSuccess }: { purchaseId: string; onSuccess:
       })
       if (error) throw error
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['purchase-additional-costs', purchaseId] })
+      if (userId) {
+        await logDashboardActivity({
+          entityType: 'purchase_additional_cost',
+          action: 'create',
+          userId,
+          entityId: purchaseId,
+          description: `Added additional cost to invoice ${invoiceNumber}`,
+        })
+      }
       toast.success('Additional cost added')
       onSuccess()
     },
@@ -521,7 +888,17 @@ function AddCostForm({ purchaseId, onSuccess }: { purchaseId: string; onSuccess:
   )
 }
 
-function AllocationSection({ lineItem, purchaseId }: { lineItem: any; purchaseId: string }) {
+function AllocationSection({
+  lineItem,
+  purchaseId,
+  invoiceNumber,
+  userId,
+}: {
+  lineItem: any
+  purchaseId: string
+  invoiceNumber: string
+  userId?: string
+}) {
   const [locationId, setLocationId] = useState('')
   const [quantity, setQuantity] = useState('')
   const queryClient = useQueryClient()
@@ -559,12 +936,43 @@ function AllocationSection({ lineItem, purchaseId }: { lineItem: any; purchaseId
       })
       if (error) throw error
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['allocations', lineItem.id] })
       queryClient.invalidateQueries({ queryKey: ['purchase-allocations', purchaseId] })
       setQuantity('')
       setLocationId('')
+      if (userId) {
+        await logDashboardActivity({
+          entityType: 'purchase_allocation',
+          action: 'create',
+          userId,
+          entityId: purchaseId,
+          description: `Added warehouse allocation to invoice ${invoiceNumber}`,
+        })
+      }
       toast.success('Allocation added')
+    },
+    onError: (error) => toast.error(error.message),
+  })
+
+  const deleteAllocation = useMutation({
+    mutationFn: async (allocationId: string) => {
+      const { error } = await supabase.from('purchase_allocations').delete().eq('id', allocationId)
+      if (error) throw error
+    },
+    onSuccess: async () => {
+      queryClient.invalidateQueries({ queryKey: ['allocations', lineItem.id] })
+      queryClient.invalidateQueries({ queryKey: ['purchase-allocations', purchaseId] })
+      if (userId) {
+        await logDashboardActivity({
+          entityType: 'purchase_allocation',
+          action: 'delete',
+          userId,
+          entityId: purchaseId,
+          description: `Removed warehouse allocation from invoice ${invoiceNumber}`,
+        })
+      }
+      toast.success('Allocation removed')
     },
     onError: (error) => toast.error(error.message),
   })
@@ -586,15 +994,28 @@ function AllocationSection({ lineItem, purchaseId }: { lineItem: any; purchaseId
           {existingAllocations.map((a: any) => (
             <div key={a.id} className="text-sm flex justify-between">
               <span>{a.warehouse_location?.name}</span>
-              <span className="font-mono">{a.quantity}</span>
+              <div className="inline-flex items-center gap-2">
+                <span className="font-mono">{a.quantity}</span>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-7 text-destructive"
+                  onClick={() => {
+                    if (!confirm('Delete this allocation?')) return
+                    deleteAllocation.mutate(a.id)
+                  }}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
           ))}
         </div>
       )}
 
       {remainingQty > 0 && (
-        <div className="flex gap-2 items-end">
-          <div className="flex-1">
+        <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+          <div className="flex-1 min-w-0">
             <Select value={locationId} onValueChange={setLocationId}>
               <SelectTrigger>
                 <SelectValue placeholder="Location" />
@@ -606,7 +1027,7 @@ function AllocationSection({ lineItem, purchaseId }: { lineItem: any; purchaseId
               </SelectContent>
             </Select>
           </div>
-          <div className="w-24">
+          <div className="w-full sm:w-24">
             <Input
               type="number"
               min="1"

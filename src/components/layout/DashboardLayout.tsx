@@ -77,7 +77,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
           </Button>
           <div className="flex items-center gap-2">
             <CircleDot className="h-5 w-5 text-primary" />
-            <h1 className="text-lg font-semibold">TdotWheels</h1>
+            <h1 className="text-lg font-semibold">TDW Inventory Tracker</h1>
           </div>
         </div>
 
@@ -111,8 +111,8 @@ function SidebarContent({
             <CircleDot className="h-5 w-5 text-white" />
           </div>
           <div>
-            <span className="text-lg font-bold tracking-tight text-white">TdotWheels</span>
-            <p className="text-[10px] uppercase tracking-widest text-sidebar-foreground/50 font-medium">Inventory Suite</p>
+            <span className="text-lg font-bold tracking-tight text-white">TDW</span>
+            <p className="text-[10px] uppercase tracking-widest text-sidebar-foreground/50 font-medium">Inventory Tracker</p>
           </div>
         </div>
         {isMobile && onClose && (

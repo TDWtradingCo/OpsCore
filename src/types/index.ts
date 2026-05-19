@@ -13,6 +13,7 @@ export type PurchaseAdditionalCost = Database['public']['Tables']['purchase_addi
 export type PurchaseAllocation = Database['public']['Tables']['purchase_allocations']['Row']
 export type SalesChannel = Database['public']['Tables']['sales_channels']['Row']
 export type ChannelPricing = Database['public']['Tables']['channel_pricing']['Row']
+export type DashboardActivityLog = Database['public']['Tables']['dashboard_activity_log']['Row']
 
 // Extended types with relations
 export interface InventoryWithRelations extends Inventory {

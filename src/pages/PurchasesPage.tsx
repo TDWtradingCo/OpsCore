@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { Plus, Search, Download } from 'lucide-react'
+import { Plus, Search, Download, Pencil, Trash2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -14,6 +14,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useAuth } from '@/contexts/AuthContext'
 import { exportToCSV } from '@/lib/csv'
 import { toast } from 'sonner'
+import { logDashboardActivity } from '@/lib/audit'
 
 export function PurchasesPage() {
   const [search, setSearch] = useState('')
@@ -22,6 +23,8 @@ export function PurchasesPage() {
   const [dateTo, setDateTo] = useState('')
   const [supplierFilter, setSupplierFilter] = useState<string>('all')
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [selectedPurchase, setSelectedPurchase] = useState<any | null>(null)
   const queryClient = useQueryClient()
   const { user } = useAuth()
 
@@ -68,6 +71,11 @@ export function PurchasesPage() {
   const [invoiceDate, setInvoiceDate] = useState('')
   const [notes, setNotes] = useState('')
 
+  const [editInvoiceNumber, setEditInvoiceNumber] = useState('')
+  const [editSupplierId, setEditSupplierId] = useState('')
+  const [editInvoiceDate, setEditInvoiceDate] = useState('')
+  const [editNotes, setEditNotes] = useState('')
+
   const createPurchase = useMutation({
     mutationFn: async () => {
       if (!invoiceNumber || !supplierId || !invoiceDate) {
@@ -88,19 +96,103 @@ export function PurchasesPage() {
       if (error) throw error
       return data
     },
-    onSuccess: () => {
+    onSuccess: async (created) => {
       queryClient.invalidateQueries({ queryKey: ['purchases'] })
       setDialogOpen(false)
       setInvoiceNumber('')
       setSupplierId('')
       setInvoiceDate('')
       setNotes('')
+      if (user) {
+        await logDashboardActivity({
+          entityType: 'purchase',
+          action: 'create',
+          userId: user.id,
+          entityId: created.id,
+          description: `Created purchase invoice ${created.invoice_number}`,
+          metadata: { supplier_id: created.supplier_id },
+        })
+      }
       toast.success('Purchase invoice created')
     },
     onError: (error) => {
       toast.error(error.message)
     },
   })
+
+  const updatePurchase = useMutation({
+    mutationFn: async () => {
+      if (!selectedPurchase) throw new Error('No purchase selected')
+      if (!editInvoiceNumber || !editSupplierId || !editInvoiceDate) {
+        throw new Error('Please fill in all required fields')
+      }
+      const { data, error } = await supabase
+        .from('purchases')
+        .update({
+          invoice_number: editInvoiceNumber,
+          supplier_id: editSupplierId,
+          invoice_date: editInvoiceDate,
+          notes: editNotes || null,
+        })
+        .eq('id', selectedPurchase.id)
+        .eq('status', 'draft')
+        .select()
+        .single()
+      if (error) throw error
+      return data
+    },
+    onSuccess: async (updated) => {
+      queryClient.invalidateQueries({ queryKey: ['purchases'] })
+      setEditDialogOpen(false)
+      setSelectedPurchase(null)
+      if (user) {
+        await logDashboardActivity({
+          entityType: 'purchase',
+          action: 'update',
+          userId: user.id,
+          entityId: updated.id,
+          description: `Updated purchase invoice ${updated.invoice_number}`,
+        })
+      }
+      toast.success('Purchase updated')
+    },
+    onError: (error) => toast.error(error.message),
+  })
+
+  const deletePurchase = useMutation({
+    mutationFn: async ({ id, invoiceNumber }: { id: string; invoiceNumber: string }) => {
+      const { error } = await supabase
+        .from('purchases')
+        .delete()
+        .eq('id', id)
+        .eq('status', 'draft')
+      if (error) throw error
+      return { id, invoiceNumber }
+    },
+    onSuccess: async ({ id, invoiceNumber }) => {
+      queryClient.invalidateQueries({ queryKey: ['purchases'] })
+      if (user) {
+        await logDashboardActivity({
+          entityType: 'purchase',
+          action: 'delete',
+          userId: user.id,
+          entityId: id,
+          description: `Deleted purchase invoice ${invoiceNumber}`,
+        })
+      }
+      toast.success('Purchase deleted')
+    },
+    onError: (error) => toast.error(error.message),
+  })
+
+  function openEditDialog(purchase: any) {
+    setSelectedPurchase(purchase)
+    setEditInvoiceNumber(purchase.invoice_number)
+    setEditSupplierId(purchase.supplier_id)
+    setEditInvoiceDate(purchase.invoice_date)
+    setEditNotes(purchase.notes ?? '')
+    setEditDialogOpen(true)
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -187,6 +279,43 @@ export function PurchasesPage() {
             </div>
           </DialogContent>
         </Dialog>
+        <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Edit Purchase Invoice</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Invoice Number *</Label>
+                <Input value={editInvoiceNumber} onChange={(e) => setEditInvoiceNumber(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Supplier *</Label>
+                <Select value={editSupplierId} onValueChange={setEditSupplierId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select supplier" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {suppliers?.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Invoice Date *</Label>
+                <Input type="date" value={editInvoiceDate} onChange={(e) => setEditInvoiceDate(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Notes</Label>
+                <Textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)} />
+              </div>
+              <Button className="w-full" onClick={() => updatePurchase.mutate()} disabled={updatePurchase.isPending}>
+                {updatePurchase.isPending ? 'Saving...' : 'Save Changes'}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
         </div>
       </div>
 
@@ -257,12 +386,13 @@ export function PurchasesPage() {
                 <TableHead>Date</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Created</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {purchases?.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                     No purchases found. Create your first purchase invoice.
                   </TableCell>
                 </TableRow>
@@ -286,6 +416,33 @@ export function PurchasesPage() {
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {new Date(purchase.created_at).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {purchase.status === 'draft' ? (
+                        <div className="inline-flex items-center gap-1">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8"
+                            onClick={() => openEditDialog(purchase)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-destructive"
+                            onClick={() => {
+                              if (!confirm(`Delete invoice ${purchase.invoice_number}?`)) return
+                              deletePurchase.mutate({ id: purchase.id, invoiceNumber: purchase.invoice_number })
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Locked</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))

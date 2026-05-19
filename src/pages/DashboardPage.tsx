@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { formatCurrency } from '@/lib/utils'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   BarChart,
   Bar,
@@ -296,6 +297,21 @@ export function DashboardPage() {
     },
   })
 
+  // ── Estimated Recoverable Tax ──
+  const { data: estimatedRecoveryTax } = useQuery({
+    queryKey: ['dashboard-estimated-recovery-tax'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('purchase_line_items')
+        .select('tax_amount, tax_recoverability')
+      if (error) throw error
+      return (data ?? []).reduce((sum: number, row: any) => {
+        if (row.tax_recoverability !== 'recoverable') return sum
+        return sum + (Number(row.tax_amount) || 0)
+      }, 0)
+    },
+  })
+
   const stats = [
     { name: 'Active Products', value: productCount ?? 0, icon: Package, href: '/products', color: 'from-blue-500 to-blue-600', bg: 'bg-blue-500/10' },
     { name: 'Total Inventory', value: inventoryTotal ?? 0, icon: BoxIcon, href: '/inventory', color: 'from-emerald-500 to-emerald-600', bg: 'bg-emerald-500/10' },
@@ -318,7 +334,7 @@ export function DashboardPage() {
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <p className="text-sm font-medium text-muted-foreground mb-1">Welcome back</p>
-          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+          <h1 className="text-3xl font-bold tracking-tight">TDW Inventory Tracker</h1>
         </div>
         <div className="flex gap-2">
           <Link to="/products">
@@ -333,6 +349,14 @@ export function DashboardPage() {
           </Link>
         </div>
       </div>
+
+      <Tabs defaultValue="overview" className="space-y-6">
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="tax-recovery">Tax Recovery</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="space-y-8">
 
       {/* Stats Grid */}
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
@@ -799,6 +823,22 @@ export function DashboardPage() {
           </Card>
         </div>
       </div>
+        </TabsContent>
+
+        <TabsContent value="tax-recovery" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Total Estimated Recovery Tax</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-4xl font-bold tabular-nums">{formatCurrency(estimatedRecoveryTax ?? 0)}</div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                This is the sum of all recoverable line-item taxes across purchase invoices.
+              </p>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

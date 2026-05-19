@@ -43,11 +43,13 @@ export interface Database {
       products: {
         Row: {
           id: string
+          product_code: string
           name: string
           sku: string
           status: ProductStatus
           upc_gtin: string | null
           brand: string | null
+          image_url: string | null
           weight: number | null
           weight_unit: WeightUnit | null
           length: number | null
@@ -59,11 +61,13 @@ export interface Database {
         }
         Insert: {
           id?: string
+          product_code?: string
           name: string
           sku: string
           status?: ProductStatus
           upc_gtin?: string | null
           brand?: string | null
+          image_url?: string | null
           weight?: number | null
           weight_unit?: WeightUnit | null
           length?: number | null
@@ -74,11 +78,13 @@ export interface Database {
           updated_at?: string
         }
         Update: {
+          product_code?: string
           name?: string
           sku?: string
           status?: ProductStatus
           upc_gtin?: string | null
           brand?: string | null
+          image_url?: string | null
           weight?: number | null
           weight_unit?: WeightUnit | null
           length?: number | null
@@ -369,6 +375,29 @@ export interface Database {
           marketplace_fulfillment_cost?: number
           updated_at?: string
         }
+      }
+      dashboard_activity_log: {
+        Row: {
+          id: string
+          entity_type: string
+          action: string
+          entity_id: string | null
+          description: string | null
+          metadata: Json | null
+          user_id: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          entity_type: string
+          action: string
+          entity_id?: string | null
+          description?: string | null
+          metadata?: Json | null
+          user_id: string
+          created_at?: string
+        }
+        Update: never
       }
     }
     Views: {
