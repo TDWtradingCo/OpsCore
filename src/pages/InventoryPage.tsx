@@ -251,6 +251,7 @@ export function InventoryPage() {
                   <TableRow>
                     <TableHead>Product</TableHead>
                     <TableHead>SKU</TableHead>
+                    <TableHead>ID</TableHead>
                     <TableHead>Location</TableHead>
                     <TableHead className="text-right">Quantity</TableHead>
                   </TableRow>
@@ -270,8 +271,7 @@ export function InventoryPage() {
                     inventory?.filter((inv: any) => inv.quantity > 0).map((inv: any) => (
                       <TableRow key={inv.id}>
                         <TableCell className="font-medium">{inv.product?.name}</TableCell>
-                        <TableCell className="font-mono text-sm">{inv.product?.sku}</TableCell>
-                        <TableCell>{inv.warehouse_location?.name}</TableCell>
+                        <TableCell className="font-mono text-sm">{inv.product?.sku}</TableCell>                        <TableCell className="font-mono text-xs">{inv.product?.product_code ?? inv.product?.id.slice(0, 8)}</TableCell>                        <TableCell>{inv.warehouse_location?.name}</TableCell>
                         <TableCell className="text-right font-mono">{inv.quantity}</TableCell>
                       </TableRow>
                     ))
@@ -742,6 +742,23 @@ function BulkInventoryUpdateForm({ onSuccess }: { onSuccess: () => void }) {
   const queryClient = useQueryClient()
   const { user } = useAuth()
 
+  const downloadTemplate = async () => {
+    const { data: products } = await supabase.from('products').select('id, sku, product_code').eq('status', 'active')
+    
+    const templateData = (products ?? []).map((p) => ({
+      product_id: p.product_code ?? p.sku,
+      warehouse_name: '',
+      quantity: 0,
+    }))
+
+    exportToCSV(templateData, 'inventory-template', [
+      { key: 'product_id', header: 'Product ID (or SKU)' },
+      { key: 'warehouse_name', header: 'Warehouse Name' },
+      { key: 'quantity', header: 'Quantity' },
+    ])
+    toast.success('Template downloaded')
+  }
+
   const bulkUpdate = useMutation({
     mutationFn: async () => {
       const lines = payload
@@ -753,7 +770,7 @@ function BulkInventoryUpdateForm({ onSuccess }: { onSuccess: () => void }) {
 
       const { data: products, error: productsError } = await supabase
         .from('products')
-        .select('id, sku')
+        .select('id, sku, product_code')
       if (productsError) throw productsError
 
       const { data: locations, error: locationsError } = await supabase
@@ -761,15 +778,17 @@ function BulkInventoryUpdateForm({ onSuccess }: { onSuccess: () => void }) {
         .select('id, name')
       if (locationsError) throw locationsError
 
+      const productByCode = new Map((products ?? []).map((p) => [p.product_code?.toLowerCase() ?? '', p.id]))
       const productBySku = new Map((products ?? []).map((p) => [p.sku.toLowerCase(), p.id]))
       const locationByName = new Map((locations ?? []).map((l) => [l.name.toLowerCase(), l.id]))
 
       let updated = 0
       for (const line of lines) {
-        const [rawSku, rawLocation, rawQty] = line.split(',').map((part) => part?.trim())
-        if (!rawSku || !rawLocation || !rawQty) continue
+        const [rawProductId, rawLocation, rawQty] = line.split(',').map((part) => part?.trim())
+        if (!rawProductId || !rawLocation || !rawQty) continue
 
-        const productId = productBySku.get(rawSku.toLowerCase())
+        let productId = productByCode.get(rawProductId.toLowerCase())
+        if (!productId) productId = productBySku.get(rawProductId.toLowerCase())
         const locationId = locationByName.get(rawLocation.toLowerCase())
         const quantity = Number(rawQty)
 
@@ -815,13 +834,18 @@ function BulkInventoryUpdateForm({ onSuccess }: { onSuccess: () => void }) {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Enter one row per line in this format: <span className="font-mono">SKU,Warehouse Name,Quantity</span>
-      </p>
+      <div>
+        <p className="text-sm text-muted-foreground mb-2">
+          Enter one row per line in this format: <span className="font-mono">Product ID (or SKU),Warehouse Name,Quantity</span>
+        </p>
+        <Button size="sm" variant="outline" onClick={downloadTemplate} className="mb-3">
+          Download Template
+        </Button>
+      </div>
       <Textarea
         value={payload}
         onChange={(e) => setPayload(e.target.value)}
-        placeholder="SKU-001,WFS CA,25"
+        placeholder="PRD-001001,WFS CA,25"
         className="h-36"
       />
       <Button className="w-full" onClick={() => bulkUpdate.mutate()} disabled={bulkUpdate.isPending}>

@@ -199,7 +199,6 @@ export function PurchaseDetailPage() {
           notes: editNotes || null,
         })
         .eq('id', id!)
-        .eq('status', 'draft')
         .select('*, supplier:suppliers(name)')
         .single()
       if (error) throw error
@@ -229,7 +228,6 @@ export function PurchaseDetailPage() {
         .from('purchases')
         .delete()
         .eq('id', id!)
-        .eq('status', 'draft')
       if (error) throw error
     },
     onSuccess: async () => {
@@ -356,6 +354,7 @@ export function PurchaseDetailPage() {
   }
 
   const isDraft = purchase.status === 'draft'
+  const canEdit = purchase.status === 'draft' || purchase.status === 'completed'
   const subtotal = lineItems?.reduce((sum, li) => sum + li.unit_cost * li.quantity, 0) ?? 0
   const totalTax = lineItems?.reduce((sum, li) => sum + li.tax_amount, 0) ?? 0
   const totalAdditional = additionalCosts?.reduce((sum, c) => sum + c.amount, 0) ?? 0
@@ -375,13 +374,13 @@ export function PurchaseDetailPage() {
         <Badge variant={purchase.status === 'completed' ? 'success' : 'secondary'}>
           {purchase.status}
         </Badge>
-        {isDraft && (
+        {canEdit && (
           <Button size="sm" variant="outline" onClick={openEditInvoice}>
             <Pencil className="h-4 w-4 mr-2" />
             Edit Invoice
           </Button>
         )}
-        {isDraft && (
+        {canEdit && (
           <Button
             size="sm"
             variant="outline"

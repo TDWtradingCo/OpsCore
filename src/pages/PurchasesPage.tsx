@@ -135,7 +135,6 @@ export function PurchasesPage() {
           notes: editNotes || null,
         })
         .eq('id', selectedPurchase.id)
-        .eq('status', 'draft')
         .select()
         .single()
       if (error) throw error
@@ -165,7 +164,6 @@ export function PurchasesPage() {
         .from('purchases')
         .delete()
         .eq('id', id)
-        .eq('status', 'draft')
       if (error) throw error
       return { id, invoiceNumber }
     },

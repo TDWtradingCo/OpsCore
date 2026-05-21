@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { Plus, Search, Download, Upload } from 'lucide-react'
+import { Plus, Search, Download, Upload, Edit, Trash2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -21,6 +21,8 @@ export function ProductsPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [selectedProduct, setSelectedProduct] = useState<string>('')
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const queryClient = useQueryClient()
   const { user } = useAuth()
@@ -105,9 +107,90 @@ export function ProductsPage() {
       { key: 'width', header: 'Width' },
       { key: 'height', header: 'Height' },
       { key: 'dimension_unit', header: 'Dimension Unit' },
+      { key: 'image_url', header: 'Image URL' },
     ])
     toast.success('Products exported')
   }
+
+  function downloadTemplate() {
+    const templateData = [{
+      name: 'Example Product',
+      sku: 'SKU-001',
+      status: 'active',
+      brand: 'Brand Name',
+      upc_gtin: '1234567890123',
+      weight: '1.5',
+      weight_unit: 'kg',
+      length: '10',
+      width: '5',
+      height: '3',
+      dimension_unit: 'cm',
+      image_url: 'https://example.com/image.jpg',
+    }]
+    exportToCSV(templateData, 'products-template', [
+      { key: 'name', header: 'Name' },
+      { key: 'sku', header: 'SKU' },
+      { key: 'status', header: 'Status' },
+      { key: 'brand', header: 'Brand' },
+      { key: 'upc_gtin', header: 'UPC/GTIN' },
+      { key: 'weight', header: 'Weight' },
+      { key: 'weight_unit', header: 'Weight Unit' },
+      { key: 'length', header: 'Length' },
+      { key: 'width', header: 'Width' },
+      { key: 'height', header: 'Height' },
+      { key: 'dimension_unit', header: 'Dimension Unit' },
+      { key: 'image_url', header: 'Image URL' },
+    ])
+    toast.success('Template downloaded')
+  }
+
+  const updateProduct = useMutation({
+    mutationFn: async ({ values, imageFile }: { values: ProductFormData; imageFile: File | null }) => {
+      let image_url = values.image_url ?? null
+      if (imageFile) {
+        const ext = imageFile.name.split('.').pop()
+        const path = `products/${crypto.randomUUID()}.${ext}`
+        const { error: uploadError } = await supabase.storage.from('product-images').upload(path, imageFile)
+        if (uploadError) throw uploadError
+        const { data: urlData } = supabase.storage.from('product-images').getPublicUrl(path)
+        image_url = urlData.publicUrl
+      }
+      const { data, error } = await supabase.from('products').update({ ...values, image_url }).eq('id', selectedProduct).select().single()
+      if (error) throw error
+      return data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['products'] })
+      setEditDialogOpen(false)
+      setSelectedProduct('')
+      toast.success('Product updated')
+    },
+    onError: (error) => toast.error(error.message),
+  })
+
+  const deleteProduct = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase.from('products').delete().eq('id', selectedProduct)
+      if (error) throw error
+    },
+    onSuccess: async () => {
+      queryClient.invalidateQueries({ queryKey: ['products'] })
+      if (user) {
+        await logDashboardActivity({
+          entityType: 'product',
+          action: 'delete',
+          userId: user.id,
+          entityId: selectedProduct as any,
+          description: 'Deleted product',
+        })
+      }
+      setSelectedProduct('')
+      toast.success('Product deleted')
+    },
+    onError: (error) => toast.error(error.message),
+  })
+
+  const selectedProductData = products?.find((p) => p.id === selectedProduct)
 
   async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -145,6 +228,7 @@ export function ProductsPage() {
           width: row['width'] ? Number(row['width']) : null,
           height: row['height'] ? Number(row['height']) : null,
           dimension_unit: row['dimension_unit'] || null,
+        image_url: row['image_url'] || null,
         }
 
         const { error } = await supabase.from('products').insert(product)
@@ -180,6 +264,10 @@ export function ProductsPage() {
             className="hidden"
             onChange={handleImport}
           />
+          <Button variant="outline" size="sm" onClick={downloadTemplate}>
+            <Download className="h-4 w-4 mr-1" />
+            Template
+          </Button>
           <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={importing}>
             <Upload className="h-4 w-4 mr-1" />
             {importing ? 'Importing...' : 'Import CSV'}
@@ -232,6 +320,103 @@ export function ProductsPage() {
           <span className="text-sm text-muted-foreground">{products.length} product{products.length !== 1 ? 's' : ''}</span>
         )}
       </div>
+
+      {/* Product Selector with Quick Actions */}
+      {products && products.length > 0 && (
+        <div className="border rounded-lg p-4 bg-card space-y-3">
+          <div>
+            <label className="text-sm font-medium">Quick Actions - Select Product</label>
+            <Select value={selectedProduct} onValueChange={setSelectedProduct}>
+              <SelectTrigger className="w-full mt-2">
+                <SelectValue placeholder="Choose a product..." />
+              </SelectTrigger>
+              <SelectContent>
+                {products.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name} ({p.sku})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {selectedProductData && (
+            <div className="flex gap-2 pt-2 border-t">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setEditDialogOpen(true)}
+                className="gap-1"
+              >
+                <Edit className="h-3.5 w-3.5" />
+                Edit
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-destructive hover:text-destructive gap-1"
+                onClick={() => {
+                  if (confirm('Delete this product?')) {
+                    deleteProduct.mutate()
+                  }
+                }}
+                disabled={deleteProduct.isPending}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  const productExport = [selectedProductData]
+                  exportToCSV(productExport, `product-${selectedProductData.sku}`, [
+                    { key: 'name', header: 'Name' },
+                    { key: 'sku', header: 'SKU' },
+                    { key: 'product_code', header: 'Product ID' },
+                    { key: 'status', header: 'Status' },
+                    { key: 'brand', header: 'Brand' },
+                    { key: 'upc_gtin', header: 'UPC/GTIN' },
+                    { key: 'weight', header: 'Weight' },
+                  ])
+                  toast.success('Product exported')
+                }}
+                className="gap-1"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Export
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Product</DialogTitle>
+          </DialogHeader>
+          {selectedProductData && (
+            <ProductForm
+              onSubmit={(values, imageFile) => updateProduct.mutate({ values, imageFile })}
+              isLoading={updateProduct.isPending}
+              defaultValues={{
+                name: selectedProductData.name,
+                sku: selectedProductData.sku,
+                status: selectedProductData.status,
+                brand: selectedProductData.brand,
+                upc_gtin: selectedProductData.upc_gtin,
+                weight: selectedProductData.weight,
+                weight_unit: selectedProductData.weight_unit,
+                length: selectedProductData.length,
+                width: selectedProductData.width,
+                height: selectedProductData.height,
+                dimension_unit: selectedProductData.dimension_unit,
+                image_url: selectedProductData.image_url,
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {isLoading ? (
         <div className="flex justify-center py-8">
