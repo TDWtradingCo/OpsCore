@@ -416,31 +416,27 @@ export function PurchasesPage() {
                       {new Date(purchase.created_at).toLocaleDateString()}
                     </TableCell>
                     <TableCell className="text-right">
-                      {purchase.status === 'draft' ? (
-                        <div className="inline-flex items-center gap-1">
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8"
-                            onClick={() => openEditDialog(purchase)}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8 text-destructive"
-                            onClick={() => {
-                              if (!confirm(`Delete invoice ${purchase.invoice_number}?`)) return
-                              deletePurchase.mutate({ id: purchase.id, invoiceNumber: purchase.invoice_number })
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">Locked</span>
-                      )}
+                      <div className="inline-flex items-center gap-1">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8"
+                          onClick={() => openEditDialog(purchase)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-destructive"
+                          onClick={() => {
+                            if (!confirm(`Permanently delete invoice ${purchase.invoice_number}?${purchase.status === 'completed' ? ' Inventory will be reverted.' : ''}`)) return
+                            deletePurchase.mutate({ id: purchase.id, invoiceNumber: purchase.invoice_number })
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))

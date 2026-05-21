@@ -224,6 +224,28 @@ export function PurchaseDetailPage() {
 
   const deletePurchase = useMutation({
     mutationFn: async () => {
+      // If purchase is completed, revert inventory changes
+      if (purchase.status === 'completed' && allocations && allocations.length > 0) {
+        // Revert inventory for each allocation
+        for (const alloc of allocations) {
+          const { data: inv } = await supabase
+            .from('inventory')
+            .select('id, quantity')
+            .eq('product_id', (alloc as any).purchase_line_item?.product_id)
+            .eq('warehouse_location_id', alloc.warehouse_location_id)
+            .single()
+
+          if (inv) {
+            const newQty = Math.max(0, inv.quantity - alloc.quantity)
+            if (newQty === 0) {
+              await supabase.from('inventory').delete().eq('id', inv.id)
+            } else {
+              await supabase.from('inventory').update({ quantity: newQty }).eq('id', inv.id)
+            }
+          }
+        }
+      }
+
       const { error } = await supabase
         .from('purchases')
         .delete()
@@ -237,10 +259,10 @@ export function PurchaseDetailPage() {
           action: 'delete',
           userId: user.id,
           entityId: purchase.id,
-          description: `Deleted purchase invoice ${purchase.invoice_number}`,
+          description: `Deleted purchase invoice ${purchase.invoice_number}${purchase.status === 'completed' ? ' (inventory reverted)' : ''}`,
         })
       }
-      toast.success('Invoice deleted')
+      toast.success('Invoice deleted and inventory synced')
       navigate('/purchases')
     },
     onError: (error) => toast.error(error.message),

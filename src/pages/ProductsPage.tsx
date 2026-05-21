@@ -21,11 +21,22 @@ export function ProductsPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [importing, setImporting] = useState(false)
-  const [selectedProduct, setSelectedProduct] = useState<string>('')
+  const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set())
   const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [editingProduct, setEditingProduct] = useState<any | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const queryClient = useQueryClient()
   const { user } = useAuth()
+
+  const toggleProductSelection = (productId: string) => {
+    const newSelected = new Set(selectedProducts)
+    if (newSelected.has(productId)) {
+      newSelected.delete(productId)
+    } else {
+      newSelected.add(productId)
+    }
+    setSelectedProducts(newSelected)
+  }
 
   const { data: products, isLoading } = useQuery({
     queryKey: ['products', search, statusFilter],
@@ -145,7 +156,7 @@ export function ProductsPage() {
   }
 
   const updateProduct = useMutation({
-    mutationFn: async ({ values, imageFile }: { values: ProductFormData; imageFile: File | null }) => {
+    mutationFn: async ({ values, imageFile, productId }: { values: ProductFormData; imageFile: File | null; productId: string }) => {
       let image_url = values.image_url ?? null
       if (imageFile) {
         const ext = imageFile.name.split('.').pop()
@@ -155,42 +166,58 @@ export function ProductsPage() {
         const { data: urlData } = supabase.storage.from('product-images').getPublicUrl(path)
         image_url = urlData.publicUrl
       }
-      const { data, error } = await supabase.from('products').update({ ...values, image_url }).eq('id', selectedProduct).select().single()
+      const { data, error } = await supabase.from('products').update({ ...values, image_url }).eq('id', productId).select().single()
       if (error) throw error
       return data
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['products'] })
       setEditDialogOpen(false)
-      setSelectedProduct('')
-      toast.success('Product updated')
+      setEditingProduct(null)
+      toast.success('Product updated successfully')
     },
     onError: (error) => toast.error(error.message),
   })
 
   const deleteProduct = useMutation({
-    mutationFn: async () => {
-      const { error } = await supabase.from('products').delete().eq('id', selectedProduct)
+    mutationFn: async (productId: string) => {
+      // Check if product has any inventory or purchase line items
+      const { data: inventoryItems } = await supabase
+        .from('inventory')
+        .select('id')
+        .eq('product_id', productId)
+      
+      const { data: purchaseItems } = await supabase
+        .from('purchase_line_items')
+        .select('id')
+        .eq('product_id', productId)
+
+      if ((inventoryItems?.length ?? 0) > 0 || (purchaseItems?.length ?? 0) > 0) {
+        throw new Error('Cannot delete product with existing inventory or purchase records. Please archive it instead.')
+      }
+
+      const { error } = await supabase.from('products').delete().eq('id', productId)
       if (error) throw error
+      return productId
     },
-    onSuccess: async () => {
+    onSuccess: async (productId) => {
       queryClient.invalidateQueries({ queryKey: ['products'] })
+      const newSelected = new Set(selectedProducts)
+      newSelected.delete(productId)
+      setSelectedProducts(newSelected)
       if (user) {
         await logDashboardActivity({
           entityType: 'product',
           action: 'delete',
           userId: user.id,
-          entityId: selectedProduct as any,
-          description: 'Deleted product',
+          entityId: productId as any,
+          description: 'Deleted product from database',
         })
       }
-      setSelectedProduct('')
-      toast.success('Product deleted')
+      toast.success('Product permanently deleted from database')
     },
     onError: (error) => toast.error(error.message),
   })
-
-  const selectedProductData = products?.find((p) => p.id === selectedProduct)
 
   async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -322,29 +349,24 @@ export function ProductsPage() {
       </div>
 
       {/* Product Selector with Quick Actions */}
-      {products && products.length > 0 && (
+      {selectedProducts.size > 0 && (
         <div className="border rounded-lg p-4 bg-card space-y-3">
-          <div>
-            <label className="text-sm font-medium">Quick Actions - Select Product</label>
-            <Select value={selectedProduct} onValueChange={setSelectedProduct}>
-              <SelectTrigger className="w-full mt-2">
-                <SelectValue placeholder="Choose a product..." />
-              </SelectTrigger>
-              <SelectContent>
-                {products.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name} ({p.sku})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium">{selectedProducts.size} Product{selectedProducts.size !== 1 ? 's' : ''} Selected</label>
+            <Button size="sm" variant="ghost" onClick={() => setSelectedProducts(new Set())}>
+              Clear
+            </Button>
           </div>
-          {selectedProductData && (
-            <div className="flex gap-2 pt-2 border-t">
+          {selectedProducts.size === 1 && (
+            <div className="flex gap-2 pt-2 border-t flex-wrap">
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => setEditDialogOpen(true)}
+                onClick={() => {
+                  const productId = Array.from(selectedProducts)[0]
+                  setEditingProduct(products?.find((p) => p.id === productId))
+                  setEditDialogOpen(true)
+                }}
                 className="gap-1"
               >
                 <Edit className="h-3.5 w-3.5" />
@@ -355,8 +377,9 @@ export function ProductsPage() {
                 variant="outline"
                 className="text-destructive hover:text-destructive gap-1"
                 onClick={() => {
-                  if (confirm('Delete this product?')) {
-                    deleteProduct.mutate()
+                  const productId = Array.from(selectedProducts)[0]
+                  if (productId && confirm('Permanently delete this product from database? This cannot be undone.')) {
+                    deleteProduct.mutate(productId)
                   }
                 }}
                 disabled={deleteProduct.isPending}
@@ -368,17 +391,20 @@ export function ProductsPage() {
                 size="sm"
                 variant="outline"
                 onClick={() => {
-                  const productExport = [selectedProductData]
-                  exportToCSV(productExport, `product-${selectedProductData.sku}`, [
-                    { key: 'name', header: 'Name' },
-                    { key: 'sku', header: 'SKU' },
-                    { key: 'product_code', header: 'Product ID' },
-                    { key: 'status', header: 'Status' },
-                    { key: 'brand', header: 'Brand' },
-                    { key: 'upc_gtin', header: 'UPC/GTIN' },
-                    { key: 'weight', header: 'Weight' },
-                  ])
-                  toast.success('Product exported')
+                  const productId = Array.from(selectedProducts)[0]
+                  const selectedProd = products?.find((p) => p.id === productId)
+                  if (selectedProd) {
+                    exportToCSV([selectedProd], `product-${selectedProd.sku}`, [
+                      { key: 'name', header: 'Name' },
+                      { key: 'sku', header: 'SKU' },
+                      { key: 'product_code', header: 'Product ID' },
+                      { key: 'status', header: 'Status' },
+                      { key: 'brand', header: 'Brand' },
+                      { key: 'upc_gtin', header: 'UPC/GTIN' },
+                      { key: 'weight', header: 'Weight' },
+                    ])
+                    toast.success('Product exported')
+                  }
                 }}
                 className="gap-1"
               >
@@ -395,23 +421,23 @@ export function ProductsPage() {
           <DialogHeader>
             <DialogTitle>Edit Product</DialogTitle>
           </DialogHeader>
-          {selectedProductData && (
+          {editingProduct && (
             <ProductForm
-              onSubmit={(values, imageFile) => updateProduct.mutate({ values, imageFile })}
+              onSubmit={(values, imageFile) => updateProduct.mutate({ values, imageFile, productId: editingProduct.id })}
               isLoading={updateProduct.isPending}
               defaultValues={{
-                name: selectedProductData.name,
-                sku: selectedProductData.sku,
-                status: selectedProductData.status,
-                brand: selectedProductData.brand,
-                upc_gtin: selectedProductData.upc_gtin,
-                weight: selectedProductData.weight,
-                weight_unit: selectedProductData.weight_unit,
-                length: selectedProductData.length,
-                width: selectedProductData.width,
-                height: selectedProductData.height,
-                dimension_unit: selectedProductData.dimension_unit,
-                image_url: selectedProductData.image_url,
+                name: editingProduct.name,
+                sku: editingProduct.sku,
+                status: editingProduct.status,
+                brand: editingProduct.brand,
+                upc_gtin: editingProduct.upc_gtin,
+                weight: editingProduct.weight,
+                weight_unit: editingProduct.weight_unit,
+                length: editingProduct.length,
+                width: editingProduct.width,
+                height: editingProduct.height,
+                dimension_unit: editingProduct.dimension_unit,
+                image_url: editingProduct.image_url,
               }}
             />
           )}
@@ -427,6 +453,13 @@ export function ProductsPage() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-[50px]"><input type="checkbox" onChange={(e) => {
+                  if (e.target.checked) {
+                    setSelectedProducts(new Set(products?.map((p) => p.id) ?? []))
+                  } else {
+                    setSelectedProducts(new Set())
+                  }
+                }} checked={selectedProducts.size === products?.length && products?.length > 0} /></TableHead>
                 <TableHead className="w-[50px]"></TableHead>
                 <TableHead>ID</TableHead>
                 <TableHead>Name</TableHead>
@@ -439,13 +472,20 @@ export function ProductsPage() {
             <TableBody>
               {products?.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
                     No products found. Create your first product to get started.
                   </TableCell>
                 </TableRow>
               ) : (
                 products?.map((product) => (
-                  <TableRow key={product.id}>
+                  <TableRow key={product.id} className={selectedProducts.has(product.id) ? 'bg-muted' : ''}>
+                    <TableCell className="w-[50px]">
+                      <input
+                        type="checkbox"
+                        checked={selectedProducts.has(product.id)}
+                        onChange={() => toggleProductSelection(product.id)}
+                      />
+                    </TableCell>
                     <TableCell>
                       {product.image_url ? (
                         <img src={product.image_url} alt={product.name} className="h-8 w-8 rounded object-cover" />
