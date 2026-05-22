@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, Download } from 'lucide-react'
+import { Plus, Search, Download, Trash2, Pencil } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,12 +12,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { exportToCSV } from '@/lib/csv'
 import { toast } from 'sonner'
+import { useAuth } from '@/contexts/AuthContext'
+import { logDashboardActivity } from '@/lib/audit'
 
 export function SuppliersPage() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingSupplier, setEditingSupplier] = useState<any>(null)
+  const queryClient = useQueryClient()
+  const { user } = useAuth()
 
   const { data: suppliers, isLoading } = useQuery({
     queryKey: ['suppliers', search, statusFilter],
@@ -37,6 +41,43 @@ export function SuppliersPage() {
       const { data, error } = await query
       if (error) throw error
       return data
+    },
+  })
+
+  const deleteSupplier = useMutation({
+    mutationFn: async ({ id, name }: { id: string; name: string }) => {
+      // Check if supplier has any purchases
+      const { data: purchases, error: checkError } = await supabase
+        .from('purchases')
+        .select('id')
+        .eq('supplier_id', id)
+        .limit(1)
+      
+      if (checkError) throw checkError
+      if (purchases && purchases.length > 0) {
+        throw new Error(`Cannot delete supplier "${name}" - they have ${purchases.length} purchase(s) associated. Delete or reassign purchases first.`)
+      }
+
+      const { error } = await supabase.from('suppliers').delete().eq('id', id)
+      if (error) throw error
+      return { id, name }
+    },
+    onSuccess: async ({ id, name }) => {
+      queryClient.invalidateQueries({ queryKey: ['suppliers'] })
+      if (user) {
+        await logDashboardActivity({
+          entityType: 'supplier',
+          action: 'delete',
+          userId: user.id,
+          entityId: id,
+          description: `Deleted supplier ${name}`,
+          metadata: { supplier_name: name },
+        })
+      }
+      toast.success('Supplier deleted')
+    },
+    onError: (error: any) => {
+      toast.error(error.message || 'Failed to delete supplier')
     },
   })
 
@@ -122,7 +163,7 @@ export function SuppliersPage() {
                 <TableHead>Email</TableHead>
                 <TableHead>Phone</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead></TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -145,16 +186,31 @@ export function SuppliersPage() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setEditingSupplier(supplier)
-                          setDialogOpen(true)
-                        }}
-                      >
-                        Edit
-                      </Button>
+                      <div className="inline-flex items-center gap-1">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8"
+                          onClick={() => {
+                            setEditingSupplier(supplier)
+                            setDialogOpen(true)
+                          }}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-destructive"
+                          onClick={() => {
+                            if (!confirm(`Permanently delete supplier "${supplier.name}"? This cannot be undone.`)) return
+                            deleteSupplier.mutate({ id: supplier.id, name: supplier.name })
+                          }}
+                          disabled={deleteSupplier.isPending}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))
