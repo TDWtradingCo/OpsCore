@@ -85,7 +85,7 @@ export function ProductsPage() {
       return data
     },
     onSuccess: async (data) => {
-      queryClient.invalidateQueries({ queryKey: ['products'] })
+      queryClient.invalidateQueries({ queryKey: ['products'], type: 'all' })
       setDialogOpen(false)
       if (user) {
         await logDashboardActivity({
@@ -184,7 +184,7 @@ export function ProductsPage() {
       return data
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['products'] })
+      queryClient.invalidateQueries({ queryKey: ['products'], type: 'all' })
       setEditDialogOpen(false)
       setEditingProduct(null)
       toast.success('Product updated successfully')
@@ -280,7 +280,7 @@ export function ProductsPage() {
         }
       }
 
-      queryClient.invalidateQueries({ queryKey: ['products'] })
+      queryClient.invalidateQueries({ queryKey: ['products'], type: 'all' })
       toast.success(`Imported ${imported} product${imported !== 1 ? 's' : ''}${skipped > 0 ? `, ${skipped} skipped` : ''}`)
     } catch {
       toast.error('Failed to parse CSV file')
