@@ -214,7 +214,8 @@ export function ProductsPage() {
       return productId
     },
     onSuccess: async (productId) => {
-      queryClient.invalidateQueries({ queryKey: ['products'] })
+      // Invalidate all products queries regardless of filters
+      queryClient.invalidateQueries({ queryKey: ['products'], type: 'all' })
       const newSelected = new Set(selectedProducts)
       newSelected.delete(productId)
       setSelectedProducts(newSelected)

@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 import { formatCurrency } from '@/lib/utils'
 import { toast } from 'sonner'
 import { logDashboardActivity } from '@/lib/audit'
@@ -24,10 +25,19 @@ export function PurchaseDetailPage() {
   const [lineDialogOpen, setLineDialogOpen] = useState(false)
   const [costDialogOpen, setCostDialogOpen] = useState(false)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [editLineItemOpen, setEditLineItemOpen] = useState(false)
+  const [editCostOpen, setEditCostOpen] = useState(false)
+  const [editingLineItem, setEditingLineItem] = useState<any | null>(null)
+  const [editingCost, setEditingCost] = useState<any | null>(null)
   const [editInvoiceNumber, setEditInvoiceNumber] = useState('')
   const [editSupplierId, setEditSupplierId] = useState('')
   const [editInvoiceDate, setEditInvoiceDate] = useState('')
   const [editNotes, setEditNotes] = useState('')
+  const [editLineQuantity, setEditLineQuantity] = useState('')
+  const [editLineUnitCost, setEditLineUnitCost] = useState('')
+  const [editLineTaxPercent, setEditLineTaxPercent] = useState('')
+  const [editCostAmount, setEditCostAmount] = useState('')
+  const [editCostNotes, setEditCostNotes] = useState('')
 
   const { data: suppliers } = useQuery({
     queryKey: ['suppliers-active-for-purchase-detail'],
@@ -565,7 +575,7 @@ export function PurchaseDetailPage() {
                     <TableCell className="text-right">
                       {item.landed_unit_cost ? formatCurrency(item.landed_unit_cost) : '—'}
                     </TableCell>
-                    {isDraft && (
+                    {(isDraft || canEdit) && (
                       <TableCell className="text-right">
                         <div className="inline-flex items-center gap-1">
                           <Button
@@ -573,11 +583,11 @@ export function PurchaseDetailPage() {
                             variant="ghost"
                             className="h-8 w-8"
                             onClick={() => {
-                              const quantity = Number(prompt('Quantity', String(item.quantity)) ?? item.quantity)
-                              const unitCost = Number(prompt('Unit cost', String(item.unit_cost)) ?? item.unit_cost)
-                              const taxPercent = Number(prompt('Tax %', String(item.tax_percent)) ?? item.tax_percent)
-                              if (!Number.isFinite(quantity) || !Number.isFinite(unitCost) || !Number.isFinite(taxPercent)) return
-                              updateLineItem.mutate({ itemId: item.id, quantity, unitCost, taxPercent })
+                              setEditingLineItem(item)
+                              setEditLineQuantity(String(item.quantity))
+                              setEditLineUnitCost(String(item.unit_cost))
+                              setEditLineTaxPercent(String(item.tax_percent))
+                              setEditLineItemOpen(true)
                             }}
                           >
                             <Pencil className="h-4 w-4" />
@@ -636,7 +646,7 @@ export function PurchaseDetailPage() {
                 <TableHead>Type</TableHead>
                 <TableHead className="text-right">Amount</TableHead>
                 <TableHead>Notes</TableHead>
-                {isDraft && <TableHead className="text-right">Actions</TableHead>}
+                {(isDraft || canEdit) && <TableHead className="text-right">Actions</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -652,7 +662,7 @@ export function PurchaseDetailPage() {
                     <TableCell className="capitalize">{cost.cost_type.replace('_', ' ')}</TableCell>
                     <TableCell className="text-right font-medium">{formatCurrency(cost.amount)}</TableCell>
                     <TableCell className="text-muted-foreground">{cost.notes ?? '—'}</TableCell>
-                    {isDraft && (
+                    {(isDraft || canEdit) && (
                       <TableCell className="text-right">
                         <div className="inline-flex items-center gap-1">
                           <Button
@@ -660,10 +670,10 @@ export function PurchaseDetailPage() {
                             variant="ghost"
                             className="h-8 w-8"
                             onClick={() => {
-                              const amount = Number(prompt('Amount', String(cost.amount)) ?? cost.amount)
-                              const notesInput = prompt('Notes', cost.notes ?? '')
-                              if (!Number.isFinite(amount)) return
-                              updateAdditionalCost.mutate({ costId: cost.id, amount, notes: notesInput || null })
+                              setEditingCost(cost)
+                              setEditCostAmount(String(cost.amount))
+                              setEditCostNotes(cost.notes ?? '')
+                              setEditCostOpen(true)
                             }}
                           >
                             <Pencil className="h-4 w-4" />
@@ -709,6 +719,129 @@ export function PurchaseDetailPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Edit Line Item Dialog */}
+      <Dialog open={editLineItemOpen} onOpenChange={setEditLineItemOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Line Item</DialogTitle>
+          </DialogHeader>
+          {editingLineItem && (
+            <div className="space-y-4">
+              <div>
+                <Label>Product: {editingLineItem.product?.name}</Label>
+              </div>
+              <div>
+                <Label htmlFor="edit-quantity">Quantity</Label>
+                <Input
+                  id="edit-quantity"
+                  type="number"
+                  step="0.01"
+                  value={editLineQuantity}
+                  onChange={(e) => setEditLineQuantity(e.target.value)}
+                  placeholder="Quantity"
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-unit-cost">Unit Cost</Label>
+                <Input
+                  id="edit-unit-cost"
+                  type="number"
+                  step="0.01"
+                  value={editLineUnitCost}
+                  onChange={(e) => setEditLineUnitCost(e.target.value)}
+                  placeholder="Unit cost"
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-tax-percent">Tax %</Label>
+                <Input
+                  id="edit-tax-percent"
+                  type="number"
+                  step="0.01"
+                  value={editLineTaxPercent}
+                  onChange={(e) => setEditLineTaxPercent(e.target.value)}
+                  placeholder="Tax percentage"
+                />
+              </div>
+              <div className="flex gap-2 justify-end">
+                <Button variant="outline" onClick={() => setEditLineItemOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    const quantity = Number(editLineQuantity)
+                    const unitCost = Number(editLineUnitCost)
+                    const taxPercent = Number(editLineTaxPercent)
+                    if (!Number.isFinite(quantity) || !Number.isFinite(unitCost) || !Number.isFinite(taxPercent)) {
+                      toast.error('Please enter valid numbers')
+                      return
+                    }
+                    updateLineItem.mutate({ itemId: editingLineItem.id, quantity, unitCost, taxPercent })
+                    setEditLineItemOpen(false)
+                  }}
+                >
+                  Save
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Cost Dialog */}
+      <Dialog open={editCostOpen} onOpenChange={setEditCostOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Additional Cost</DialogTitle>
+          </DialogHeader>
+          {editingCost && (
+            <div className="space-y-4">
+              <div>
+                <Label>Type: {editingCost.cost_type.replace('_', ' ')}</Label>
+              </div>
+              <div>
+                <Label htmlFor="edit-cost-amount">Amount</Label>
+                <Input
+                  id="edit-cost-amount"
+                  type="number"
+                  step="0.01"
+                  value={editCostAmount}
+                  onChange={(e) => setEditCostAmount(e.target.value)}
+                  placeholder="Amount"
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-cost-notes">Notes</Label>
+                <Textarea
+                  id="edit-cost-notes"
+                  value={editCostNotes}
+                  onChange={(e) => setEditCostNotes(e.target.value)}
+                  placeholder="Notes"
+                />
+              </div>
+              <div className="flex gap-2 justify-end">
+                <Button variant="outline" onClick={() => setEditCostOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    const amount = Number(editCostAmount)
+                    if (!Number.isFinite(amount)) {
+                      toast.error('Please enter a valid amount')
+                      return
+                    }
+                    updateAdditionalCost.mutate({ costId: editingCost.id, amount, notes: editCostNotes || null })
+                    setEditCostOpen(false)
+                  }}
+                >
+                  Save
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
