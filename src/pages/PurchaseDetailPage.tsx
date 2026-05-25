@@ -28,6 +28,8 @@ export function PurchaseDetailPage() {
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [editLineItemOpen, setEditLineItemOpen] = useState(false)
   const [editCostOpen, setEditCostOpen] = useState(false)
+  const [addLineItemInDialogOpen, setAddLineItemInDialogOpen] = useState(false)
+  const [addCostInDialogOpen, setAddCostInDialogOpen] = useState(false)
   const [editingLineItem, setEditingLineItem] = useState<any | null>(null)
   const [editingCost, setEditingCost] = useState<any | null>(null)
   const [editInvoiceNumber, setEditInvoiceNumber] = useState('')
@@ -510,6 +512,13 @@ export function PurchaseDetailPage() {
             {/* Line Items Tab */}
             <TabsContent value="line-items" className="space-y-4 mt-4">
               <div className="space-y-4">
+                <Button 
+                  size="sm" 
+                  className="w-full"
+                  onClick={() => setAddLineItemInDialogOpen(true)}
+                >
+                  <Plus className="h-4 w-4 mr-1" /> Add Line Item
+                </Button>
                 {lineItems?.length === 0 ? (
                   <div className="text-center text-muted-foreground py-6">
                     No line items. Add products to this purchase.
@@ -582,6 +591,13 @@ export function PurchaseDetailPage() {
             {/* Additional Costs Tab */}
             <TabsContent value="costs" className="space-y-4 mt-4">
               <div className="space-y-4">
+                <Button 
+                  size="sm" 
+                  className="w-full"
+                  onClick={() => setAddCostInDialogOpen(true)}
+                >
+                  <Plus className="h-4 w-4 mr-1" /> Add Cost
+                </Button>
                 {additionalCosts?.length === 0 ? (
                   <div className="text-center text-muted-foreground py-6">
                     No additional costs
@@ -1013,6 +1029,40 @@ export function PurchaseDetailPage() {
                 </Button>
               </div>
             </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Line Item from Edit Dialog */}
+      <Dialog open={addLineItemInDialogOpen} onOpenChange={setAddLineItemInDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Line Item</DialogTitle>
+          </DialogHeader>
+          {purchase && user && (
+            <AddLineItemForm
+              purchaseId={id!}
+              invoiceNumber={purchase.invoice_number}
+              userId={user.id}
+              onSuccess={() => setAddLineItemInDialogOpen(false)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Cost from Edit Dialog */}
+      <Dialog open={addCostInDialogOpen} onOpenChange={setAddCostInDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Additional Cost</DialogTitle>
+          </DialogHeader>
+          {purchase && user && (
+            <AddCostForm
+              purchaseId={id!}
+              invoiceNumber={purchase.invoice_number}
+              userId={user.id}
+              onSuccess={() => setAddCostInDialogOpen(false)}
+            />
           )}
         </DialogContent>
       </Dialog>
