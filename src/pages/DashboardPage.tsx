@@ -497,11 +497,11 @@ export function DashboardPage() {
       )}
 
       {/* Main Grid: 2 columns */}
-      <div className="grid gap-6 lg:grid-cols-7">
+      <div className="grid gap-4 md:gap-6 grid-cols-1 lg:grid-cols-7 w-full">
         {/* Left Column - 4/7 */}
-        <div className="lg:col-span-4 space-y-6">
+        <div className="lg:col-span-4 space-y-4 md:space-y-6 min-w-0">
           {/* Purchase Spending Trend */}
-          <Card className="overflow-hidden">
+          <Card className="overflow-hidden w-full">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Purchase Spending Trend</CardTitle>
@@ -614,7 +614,7 @@ export function DashboardPage() {
         </div>
 
         {/* Right Column - 3/7 */}
-        <div className="lg:col-span-3 space-y-6">
+        <div className="lg:col-span-3 space-y-4 md:space-y-6 min-w-0">
           {/* Inventory Distribution Donut */}
           <Card>
             <CardHeader className="pb-3">
@@ -650,12 +650,12 @@ export function DashboardPage() {
                       />
                     </PieChart>
                   </ResponsiveContainer>
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mt-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-2 sm:gap-x-4 gap-y-1.5 mt-2">
                     {inventoryPieData.map((item, i) => (
-                      <div key={item.name} className="flex items-center gap-2 text-xs">
+                      <div key={item.name} className="flex items-center gap-2 text-xs min-w-0">
                         <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }} />
                         <span className="truncate text-muted-foreground">{item.name}</span>
-                        <span className="ml-auto font-medium tabular-nums">{item.value.toLocaleString()}</span>
+                        <span className="ml-auto font-medium tabular-nums shrink-0">{item.value.toLocaleString()}</span>
                       </div>
                     ))}
                   </div>
@@ -700,7 +700,7 @@ export function DashboardPage() {
                       />
                     </PieChart>
                   </ResponsiveContainer>
-                  <div className="flex justify-center gap-6 mt-1">
+                  <div className="flex flex-wrap justify-center gap-3 md:gap-6 mt-2">
                     <div className="flex items-center gap-2 text-xs">
                       <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: 'hsl(0, 72%, 51%)' }} />
                       <span className="text-muted-foreground">Completed</span>

@@ -1155,11 +1155,11 @@ function AddLineItemForm({
         <Label>Product *</Label>
         <Dialog open={productSearchOpen} onOpenChange={setProductSearchOpen}>
           <DialogTrigger asChild>
-            <Button variant="outline" className="w-full justify-start text-left font-normal h-auto py-2">
+            <Button variant="outline" className="w-full justify-start text-left font-normal h-auto py-2 overflow-hidden">
               {selectedProduct ? (
                 <div className="flex flex-col gap-0.5 w-full min-w-0">
-                  <span className="font-medium line-clamp-2 text-sm">{selectedProduct.name}</span>
-                  <span className="text-xs text-muted-foreground">SKU: {selectedProduct.sku} | ID: {selectedProduct.product_code}</span>
+                  <span className="font-medium line-clamp-2 text-sm truncate">{selectedProduct.name}</span>
+                  <span className="text-xs text-muted-foreground truncate">SKU: {selectedProduct.sku} | ID: {selectedProduct.product_code}</span>
                 </div>
               ) : (
                 'Select product...'
@@ -1223,7 +1223,7 @@ function AddLineItemForm({
           </DialogContent>
         </Dialog>
       </div>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label>Quantity *</Label>
           <Input type="number" min="1" value={quantity} onChange={(e) => setQuantity(e.target.value)} onFocus={(e) => e.target.select()} />
@@ -1233,7 +1233,7 @@ function AddLineItemForm({
           <Input type="number" step="0.01" min="0" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} onFocus={(e) => e.target.select()} />
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label>Tax %</Label>
           <Input type="number" step="0.01" value={taxPercent} onChange={(e) => setTaxPercent(e.target.value)} onFocus={(e) => e.target.select()} />
