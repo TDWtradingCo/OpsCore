@@ -1155,11 +1155,11 @@ function AddLineItemForm({
         <Label>Product *</Label>
         <Dialog open={productSearchOpen} onOpenChange={setProductSearchOpen}>
           <DialogTrigger asChild>
-            <Button variant="outline" className="w-full justify-start text-left font-normal h-auto py-2 overflow-hidden">
+            <Button variant="outline" className="w-full justify-start text-left font-normal h-auto py-1 px-2 overflow-hidden max-h-12">
               {selectedProduct ? (
-                <div className="flex flex-col gap-0.5 w-full min-w-0">
-                  <span className="font-medium line-clamp-2 text-sm truncate">{selectedProduct.name}</span>
-                  <span className="text-xs text-muted-foreground truncate">SKU: {selectedProduct.sku} | ID: {selectedProduct.product_code}</span>
+                <div className="flex flex-col gap-0 w-full min-w-0">
+                  <span className="font-medium line-clamp-1 text-xs">{selectedProduct.name}</span>
+                  <span className="text-xs text-muted-foreground truncate">{selectedProduct.sku} | {selectedProduct.product_code}</span>
                 </div>
               ) : (
                 'Select product...'
