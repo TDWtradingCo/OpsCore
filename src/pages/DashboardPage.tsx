@@ -63,6 +63,7 @@ export function DashboardPage() {
     'warehouses',
   ])
   const [draggingStatKey, setDraggingStatKey] = useState<string | null>(null)
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
 
   useEffect(() => {
     try {
@@ -77,6 +78,14 @@ export function DashboardPage() {
     } catch {
       // ignore invalid local storage payload
     }
+  }, [])
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768)
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
   }, [])
 
   useEffect(() => {
@@ -414,7 +423,7 @@ export function DashboardPage() {
         <TabsContent value="overview" className="space-y-8">
 
       {/* Stats Grid */}
-      <div className="grid gap-4 grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         {orderedStats.map((stat, i) => (
           <div
             key={stat.key}
@@ -553,7 +562,7 @@ export function DashboardPage() {
                   <BarChart data={inventoryByLocation} layout="vertical" margin={{ top: 0, right: 20, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(0, 0%, 90%)" horizontal={false} />
                     <XAxis type="number" tick={{ fontSize: 12 }} stroke="hsl(0, 0%, 60%)" tickLine={false} axisLine={false} />
-                    <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 11 }} stroke="hsl(0, 0%, 60%)" tickLine={false} axisLine={false} />
+                    <YAxis type="category" dataKey="name" width={isMobile ? 60 : 100} tick={{ fontSize: 11 }} stroke="hsl(0, 0%, 60%)" tickLine={false} axisLine={false} />
                     <Tooltip
                       contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 20px -4px rgba(0,0,0,0.12)', fontSize: 13, padding: '8px 12px' }}
                       formatter={(value: any) => [Number(value).toLocaleString() + ' units', 'Quantity']}
@@ -591,7 +600,7 @@ export function DashboardPage() {
                   <BarChart data={topProducts} layout="vertical" margin={{ top: 0, right: 20, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(0, 0%, 90%)" horizontal={false} />
                     <XAxis type="number" tick={{ fontSize: 12 }} stroke="hsl(0, 0%, 60%)" tickLine={false} axisLine={false} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                    <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} stroke="hsl(0, 0%, 60%)" tickLine={false} axisLine={false} />
+                    <YAxis type="category" dataKey="name" width={isMobile ? 60 : 120} tick={{ fontSize: 11 }} stroke="hsl(0, 0%, 60%)" tickLine={false} axisLine={false} />
                     <Tooltip
                       contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 20px -4px rgba(0,0,0,0.12)', fontSize: 13, padding: '8px 12px' }}
                       formatter={(value: any) => [formatCurrency(Number(value)), 'Value']}

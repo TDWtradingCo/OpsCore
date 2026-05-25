@@ -1155,10 +1155,10 @@ function AddLineItemForm({
         <Label>Product *</Label>
         <Dialog open={productSearchOpen} onOpenChange={setProductSearchOpen}>
           <DialogTrigger asChild>
-            <Button variant="outline" className="w-full justify-start text-left font-normal">
+            <Button variant="outline" className="w-full justify-start text-left font-normal h-auto py-2">
               {selectedProduct ? (
-                <div className="flex flex-col gap-0.5">
-                  <span className="font-medium">{selectedProduct.name}</span>
+                <div className="flex flex-col gap-0.5 w-full min-w-0">
+                  <span className="font-medium line-clamp-2 text-sm">{selectedProduct.name}</span>
                   <span className="text-xs text-muted-foreground">SKU: {selectedProduct.sku} | ID: {selectedProduct.product_code}</span>
                 </div>
               ) : (
@@ -1197,9 +1197,9 @@ function AddLineItemForm({
                     ) : (
                       filteredProducts.map((p) => (
                         <tr key={p.id} className="border-b hover:bg-muted/50 transition-colors">
-                          <td className="p-3 font-medium">{p.name}</td>
-                          <td className="p-3 font-mono text-xs">{p.sku}</td>
-                          <td className="p-3 font-mono text-xs">{p.product_code}</td>
+                          <td className="p-3 font-medium max-w-xs truncate">{p.name}</td>
+                          <td className="p-3 font-mono text-xs whitespace-nowrap">{p.sku}</td>
+                          <td className="p-3 font-mono text-xs whitespace-nowrap">{p.product_code}</td>
                           <td className="p-3">
                             <Button
                               size="sm"
