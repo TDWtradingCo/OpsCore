@@ -1024,15 +1024,25 @@ function AddLineItemForm({
   const [taxPercent, setTaxPercent] = useState('0')
   const [taxAmount, setTaxAmount] = useState('0')
   const [taxRecoverability, setTaxRecoverability] = useState<'recoverable' | 'non_recoverable'>('recoverable')
+  const [productSearchOpen, setProductSearchOpen] = useState(false)
+  const [productSearch, setProductSearch] = useState('')
   const queryClient = useQueryClient()
 
   const { data: products } = useQuery({
     queryKey: ['products-list'],
     queryFn: async () => {
-      const { data } = await supabase.from('products').select('id, name, sku').eq('status', 'active')
+      const { data } = await supabase.from('products').select('id, name, sku, product_code, status').eq('status', 'active').order('name')
       return data ?? []
     },
   })
+
+  const filteredProducts = products?.filter(p =>
+    p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
+    p.sku.toLowerCase().includes(productSearch.toLowerCase()) ||
+    p.product_code?.toLowerCase().includes(productSearch.toLowerCase())
+  ) ?? []
+
+  const selectedProduct = products?.find(p => p.id === productId)
 
   const addItem = useMutation({
     mutationFn: async () => {
@@ -1080,16 +1090,75 @@ function AddLineItemForm({
     <div className="space-y-4">
       <div className="space-y-2">
         <Label>Product *</Label>
-        <Select value={productId} onValueChange={setProductId}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select product" />
-          </SelectTrigger>
-          <SelectContent>
-            {products?.map((p) => (
-              <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku})</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Dialog open={productSearchOpen} onOpenChange={setProductSearchOpen}>
+          <DialogTrigger asChild>
+            <Button variant="outline" className="w-full justify-start text-left font-normal">
+              {selectedProduct ? (
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-medium">{selectedProduct.name}</span>
+                  <span className="text-xs text-muted-foreground">SKU: {selectedProduct.sku} | ID: {selectedProduct.product_code}</span>
+                </div>
+              ) : (
+                'Select product...'
+              )}
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-2xl max-h-[70vh]">
+            <DialogHeader>
+              <DialogTitle>Select Product</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <Input
+                placeholder="Search by name, SKU, or product ID..."
+                value={productSearch}
+                onChange={(e) => setProductSearch(e.target.value)}
+                className="w-full"
+              />
+              <div className="overflow-y-auto max-h-[50vh] border rounded-md">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-muted border-b">
+                    <tr>
+                      <th className="text-left p-3">Product Name</th>
+                      <th className="text-left p-3">SKU</th>
+                      <th className="text-left p-3">Product ID</th>
+                      <th className="text-left p-3">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredProducts.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="p-3 text-center text-muted-foreground">
+                          No products found
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredProducts.map((p) => (
+                        <tr key={p.id} className="border-b hover:bg-muted/50 transition-colors">
+                          <td className="p-3 font-medium">{p.name}</td>
+                          <td className="p-3 font-mono text-xs">{p.sku}</td>
+                          <td className="p-3 font-mono text-xs">{p.product_code}</td>
+                          <td className="p-3">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setProductId(p.id)
+                                setProductSearch('')
+                                setProductSearchOpen(false)
+                              }}
+                            >
+                              Select
+                            </Button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
