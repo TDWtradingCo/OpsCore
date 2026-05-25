@@ -1166,7 +1166,7 @@ function AddLineItemForm({
               )}
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-2xl max-h-[70vh]">
+          <DialogContent className="max-w-sm md:max-w-2xl max-h-[70vh]">
             <DialogHeader>
               <DialogTitle>Select Product</DialogTitle>
             </DialogHeader>
@@ -1177,30 +1177,30 @@ function AddLineItemForm({
                 onChange={(e) => setProductSearch(e.target.value)}
                 className="w-full"
               />
-              <div className="overflow-y-auto max-h-[50vh] border rounded-md">
+              <div className="overflow-auto max-h-[50vh] border rounded-md">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-muted border-b">
                     <tr>
-                      <th className="text-left p-3">Product Name</th>
-                      <th className="text-left p-3">SKU</th>
-                      <th className="text-left p-3">Product ID</th>
-                      <th className="text-left p-3">Action</th>
+                      <th className="text-left p-2 md:p-3">Product Name</th>
+                      <th className="text-left p-2 md:p-3">SKU</th>
+                      <th className="text-left p-2 md:p-3">Product ID</th>
+                      <th className="text-left p-2 md:p-3">Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filteredProducts.length === 0 ? (
                       <tr>
-                        <td colSpan={4} className="p-3 text-center text-muted-foreground">
+                        <td colSpan={4} className="p-2 md:p-3 text-center text-muted-foreground">
                           No products found
                         </td>
                       </tr>
                     ) : (
                       filteredProducts.map((p) => (
                         <tr key={p.id} className="border-b hover:bg-muted/50 transition-colors">
-                          <td className="p-3 font-medium max-w-xs truncate">{p.name}</td>
-                          <td className="p-3 font-mono text-xs whitespace-nowrap">{p.sku}</td>
-                          <td className="p-3 font-mono text-xs whitespace-nowrap">{p.product_code}</td>
-                          <td className="p-3">
+                          <td className="p-2 md:p-3 font-medium max-w-xs truncate">{p.name}</td>
+                          <td className="p-2 md:p-3 font-mono text-xs whitespace-nowrap">{p.sku}</td>
+                          <td className="p-2 md:p-3 font-mono text-xs whitespace-nowrap">{p.product_code}</td>
+                          <td className="p-2 md:p-3">
                             <Button
                               size="sm"
                               variant="outline"
