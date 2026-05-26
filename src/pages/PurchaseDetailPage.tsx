@@ -111,42 +111,38 @@ export function PurchaseDetailPage() {
         throw new Error('Purchase must have at least one line item')
       }
 
-      // ── LANDED COST CALCULATION ──
-      // Landed Cost = (Unit Cost + Portion of Additional Costs + Non-Recoverable Tax) / Quantity
+      // ── LANDED COST CALCULATION (WEIGHT-BASED) ──
+      // Landed Cost = (Unit Cost + Portion of Additional Costs) / Quantity
       // 
-      // Step 1: Calculate total value of all line items (quantity × unit cost)
-      // Step 2: For each line item, calculate its proportion of the total value
+      // Step 1: Calculate total quantity across all line items
+      // Step 2: For each line item, calculate its weight as a % of total quantity
       // Step 3: Allocate additional costs proportionally to each line item
-      //         Additional Cost Allocation = Total Additional Costs × (Line Item Value / Total Value)
-      // Step 4: Add non-recoverable tax (recoverable tax is not included in landed cost)
-      // Step 5: Divide by quantity to get landed unit cost
+      //         Additional Cost Allocation = Total Additional Costs × (Line Item Quantity / Total Quantity)
+      // Step 4: Calculate total landed unit cost
+      //         Landed Unit Cost = (Unit Cost × Quantity + Allocated Additional Cost) / Quantity
       //
       // Example:
-      // - Line Item 1: 100 units @ $10 = $1,000 (40% of $2,500 total)
-      // - Line Item 2: 50 units @ $30 = $1,500 (60% of $2,500 total)
-      // - Additional Costs: $100 (shipping)
-      // - Line Item 1 gets $40 of shipping (40% × $100)
-      // - Line Item 2 gets $60 of shipping (60% × $100)
-      // - Line Item 1 landed unit cost = ($1,000 + $40 + tax) / 100
-      // - Line Item 2 landed unit cost = ($1,500 + $60 + tax) / 50
+      // - Line Item 1: 100 units @ $10 = $1,000 (54.05% of 185 total qty)
+      // - Line Item 2: 20 units @ $30 = $600 (10.81% of 185 total qty)
+      // - Line Item 3: 65 units @ $15 = $975 (35.14% of 185 total qty)
+      // - Additional Costs: $300 (customs + shipping)
+      // - Line Item 1 allocated: $300 × (100/185) = $162.16
+      // - Line Item 2 allocated: $300 × (20/185) = $32.43
+      // - Line Item 3 allocated: $300 × (65/185) = $105.41
+      // - Line Item 1 landed unit cost = ($1,000 + $162.16) / 100 = $11.62
 
-      const totalLineValue = lineItems.reduce((sum, li) => sum + li.unit_cost * li.quantity, 0)
-      const totalAdditionalCosts = additionalCosts?.reduce((sum, c) => sum + c.amount, 0) ?? 0
+      const totalQty = lineItems.reduce((sum, li) => sum + li.quantity, 0)
+      const totalAddCosts = additionalCosts?.reduce((sum, c) => sum + c.amount, 0) ?? 0
 
       // Update each line item with calculated landed cost
       for (const li of lineItems) {
-        const lineValue = li.unit_cost * li.quantity
-        const proportion = totalLineValue > 0 ? lineValue / totalLineValue : 0
+        const weightPercent = totalQty > 0 ? li.quantity / totalQty : 0
         
-        // Distribute additional costs proportionally based on line item value
-        const allocatedCosts = totalAdditionalCosts * proportion
+        // Distribute additional costs proportionally based on quantity weight
+        const allocatedCosts = totalAddCosts * weightPercent
         
-        // Only non-recoverable tax is included in landed cost
-        // Recoverable tax (VAT, GST, etc.) is deducted and not part of landed cost
-        const lineNonRecTax = li.tax_recoverability === 'non_recoverable' ? li.tax_amount : 0
-        
-        // Final landed unit cost calculation
-        const landedUnitCost = (li.unit_cost * li.quantity + allocatedCosts + lineNonRecTax) / li.quantity
+        // Landed unit cost = (subtotal + allocated costs) / quantity
+        const landedUnitCost = (li.unit_cost * li.quantity + allocatedCosts) / li.quantity
 
         await supabase
           .from('purchase_line_items')
@@ -439,6 +435,31 @@ export function PurchaseDetailPage() {
   const subtotal = lineItems?.reduce((sum, li) => sum + li.unit_cost * li.quantity, 0) ?? 0
   const totalTax = lineItems?.reduce((sum, li) => sum + li.tax_amount, 0) ?? 0
   const totalAdditional = additionalCosts?.reduce((sum, c) => sum + c.amount, 0) ?? 0
+  
+  // Weight-based landed cost calculations
+  const totalQuantity = lineItems?.reduce((sum, li) => sum + li.quantity, 0) ?? 0
+  
+  // Function to get weight % for a line item based on quantity
+  const getWeightPercent = (itemQty: number) => {
+    if (totalQuantity === 0) return 0
+    return (itemQty / totalQuantity) * 100
+  }
+  
+  // Function to get allocated additional cost for a line item
+  const getAllocatedAdditionalCost = (itemQty: number) => {
+    if (totalQuantity === 0) return 0
+    return totalAdditional * (itemQty / totalQuantity)
+  }
+  
+  // Function to get total landed cost for a line item (including allocated costs)
+  const getLineItemLandedCost = (item: any) => {
+    const baseLineTotal = item.unit_cost * item.quantity
+    const allocated = getAllocatedAdditionalCost(item.quantity)
+    return baseLineTotal + item.tax_amount + allocated
+  }
+  
+  // Total landed cost across all items
+  const totalLandedCost = lineItems?.reduce((sum, li) => sum + getLineItemLandedCost(li), 0) ?? 0
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -697,10 +718,11 @@ export function PurchaseDetailPage() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Total</CardTitle>
+            <CardTitle className="text-sm font-medium">Landed Cost Total</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(subtotal + totalTax + totalAdditional)}</div>
+            <div className="text-2xl font-bold">{formatCurrency(totalLandedCost)}</div>
+            <p className="text-xs text-muted-foreground mt-1">{formatCurrency(subtotal + totalTax + totalAdditional)}</p>
           </CardContent>
         </Card>
       </div>
@@ -738,6 +760,8 @@ export function PurchaseDetailPage() {
                 <TableHead className="text-right">Sub Total</TableHead>
                 <TableHead className="text-right">Tax</TableHead>
                 <TableHead>Tax Type</TableHead>
+                <TableHead className="text-right">Weight %</TableHead>
+                <TableHead className="text-right">Allocated Cost</TableHead>
                 <TableHead className="text-right">Landed Cost</TableHead>
                 {isDraft && <TableHead className="text-right">Actions</TableHead>}
               </TableRow>
@@ -745,7 +769,7 @@ export function PurchaseDetailPage() {
             <TableBody>
               {lineItems?.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={isDraft ? 8 : 7} className="text-center text-muted-foreground">
+                  <TableCell colSpan={isDraft ? 10 : 9} className="text-center text-muted-foreground">
                     No line items. Add products to this purchase.
                   </TableCell>
                 </TableRow>
@@ -767,8 +791,14 @@ export function PurchaseDetailPage() {
                         {item.tax_recoverability === 'recoverable' ? 'Recoverable' : 'Non-Recoverable'}
                       </Badge>
                     </TableCell>
+                    <TableCell className="text-right text-sm">
+                      {getWeightPercent(item.quantity).toFixed(2)}%
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {formatCurrency(getAllocatedAdditionalCost(item.quantity))}
+                    </TableCell>
                     <TableCell className="text-right font-medium">
-                      {formatCurrency((item.unit_cost * item.quantity) + item.tax_amount)}
+                      {formatCurrency(getLineItemLandedCost(item))}
                     </TableCell>
                     {(isDraft || canEdit) && (
                       <TableCell className="text-right">
