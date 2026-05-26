@@ -328,14 +328,33 @@ function SupplierForm({ defaultValues, onSuccess }: { defaultValues?: any; onSuc
 
 function BulkSupplierImportForm({ onSuccess }: { onSuccess: () => void }) {
   const [csvContent, setCsvContent] = useState('')
+  const [fileName, setFileName] = useState<string>('')
   const [preview, setPreview] = useState<any[]>([])
   const [errors, setErrors] = useState<string[]>([])
   const queryClient = useQueryClient()
   const { user } = useAuth()
 
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    setFileName(file.name)
+    setPreview([])
+    setErrors([])
+
+    try {
+      const text = await file.text()
+      setCsvContent(text)
+      // Auto-parse on file upload
+      parsePreviewFromContent(text)
+    } catch (error) {
+      setErrors(['Failed to read file: ' + (error instanceof Error ? error.message : 'Unknown error')])
+    }
+  }
+
   const mutation = useMutation({
     mutationFn: async () => {
-      if (!csvContent.trim()) throw new Error('Please paste CSV content')
+      if (!csvContent.trim()) throw new Error('Please upload a CSV file')
       
       // Parse CSV manually (simple parser for comma-separated values)
       const lines = csvContent.trim().split('\n')
@@ -414,8 +433,8 @@ function BulkSupplierImportForm({ onSuccess }: { onSuccess: () => void }) {
     },
   })
 
-  const handleParsePreview = () => {
-    const lines = csvContent.trim().split('\n')
+  const parsePreviewFromContent = (content: string) => {
+    const lines = content.trim().split('\n')
     if (lines.length < 2) {
       setErrors(['CSV must have at least a header and one data row'])
       setPreview([])
@@ -471,24 +490,23 @@ function BulkSupplierImportForm({ onSuccess }: { onSuccess: () => void }) {
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <Label>CSV Content</Label>
+        <Label>CSV File</Label>
         <p className="text-xs text-muted-foreground">
           Required columns: <code className="bg-muted px-1 rounded">name</code>
         </p>
         <p className="text-xs text-muted-foreground">
           Optional columns: <code className="bg-muted px-1 rounded">short_name</code>, <code className="bg-muted px-1 rounded">email</code>, <code className="bg-muted px-1 rounded">phone</code>, <code className="bg-muted px-1 rounded">notes</code>
         </p>
-        <Textarea
-          placeholder="Paste CSV content here&#10;name,short_name,email,phone&#10;Supplier A,SA,contact@a.com,555-1234&#10;Supplier B,SB,contact@b.com,555-5678"
-          value={csvContent}
-          onChange={(e) => setCsvContent(e.target.value)}
-          className="font-mono text-xs min-h-40"
-        />
+        <div className="flex items-center gap-2">
+          <input
+            type="file"
+            accept=".csv"
+            onChange={handleFileUpload}
+            className="flex h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground hover:file:bg-accent cursor-pointer flex-1"
+          />
+          {fileName && <span className="text-xs text-muted-foreground truncate">{fileName}</span>}
+        </div>
       </div>
-
-      <Button variant="outline" size="sm" onClick={handleParsePreview} disabled={!csvContent.trim()}>
-        Preview
-      </Button>
 
       {errors.length > 0 && (
         <div className="bg-destructive/10 border border-destructive/20 rounded p-3 space-y-1">
