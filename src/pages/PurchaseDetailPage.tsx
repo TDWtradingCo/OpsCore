@@ -309,23 +309,31 @@ export function PurchaseDetailPage() {
   })
 
   const updateLineItem = useMutation({
-    mutationFn: async ({ itemId, quantity, unitCost, taxPercent, taxRecoverability }: { itemId: string; quantity: number; unitCost: number; taxPercent: number; taxRecoverability: 'recoverable' | 'non_recoverable' }) => {
+    mutationFn: async ({ itemId, quantity, unitCost, taxPercent, taxRecoverability, oldQuantity, oldUnitCost, oldTaxPercent, oldTaxRecoverability }: { itemId: string; quantity: number; unitCost: number; taxPercent: number; taxRecoverability: 'recoverable' | 'non_recoverable'; oldQuantity: number; oldUnitCost: number; oldTaxPercent: number; oldTaxRecoverability: string }) => {
       const taxAmount = Number(((quantity * unitCost * taxPercent) / 100).toFixed(2))
       const { error } = await supabase
         .from('purchase_line_items')
         .update({ quantity, unit_cost: unitCost, tax_percent: taxPercent, tax_amount: taxAmount, tax_recoverability: taxRecoverability })
         .eq('id', itemId)
       if (error) throw error
+      return { oldQuantity, oldUnitCost, oldTaxPercent, oldTaxRecoverability }
     },
-    onSuccess: async () => {
+    onSuccess: async (oldValues) => {
       queryClient.invalidateQueries({ queryKey: ['purchase-line-items', id] })
       if (user && purchase) {
+        const changes: Record<string, { old: any; new: any }> = {}
+        if (oldValues.oldQuantity !== editingLineItem?.quantity) changes['Quantity'] = { old: oldValues.oldQuantity, new: editingLineItem?.quantity }
+        if (oldValues.oldUnitCost !== editingLineItem?.unit_cost) changes['Unit Cost'] = { old: `$${oldValues.oldUnitCost.toFixed(2)}`, new: `$${editingLineItem?.unit_cost.toFixed(2)}` }
+        if (oldValues.oldTaxPercent !== editingLineItem?.tax_percent) changes['Tax %'] = { old: `${oldValues.oldTaxPercent}%`, new: `${editingLineItem?.tax_percent}%` }
+        if (oldValues.oldTaxRecoverability !== editingLineItem?.tax_recoverability) changes['Tax Type'] = { old: oldValues.oldTaxRecoverability, new: editingLineItem?.tax_recoverability }
+        
         await logDashboardActivity({
           entityType: 'purchase_line_item',
           action: 'update',
           userId: user.id,
           entityId: id,
-          description: `Edited a line item in invoice ${purchase.invoice_number}`,
+          description: `Edited line item in invoice ${purchase.invoice_number}`,
+          changes: Object.keys(changes).length > 0 ? changes : undefined,
         })
       }
       toast.success('Line item updated')
@@ -334,11 +342,12 @@ export function PurchaseDetailPage() {
   })
 
   const deleteLineItem = useMutation({
-    mutationFn: async (itemId: string) => {
+    mutationFn: async ({ itemId, itemData }: { itemId: string; itemData: any }) => {
       const { error } = await supabase.from('purchase_line_items').delete().eq('id', itemId)
       if (error) throw error
+      return itemData
     },
-    onSuccess: async () => {
+    onSuccess: async (deletedItem) => {
       queryClient.invalidateQueries({ queryKey: ['purchase-line-items', id] })
       queryClient.invalidateQueries({ queryKey: ['purchase-allocations', id] })
       if (user && purchase) {
@@ -347,7 +356,8 @@ export function PurchaseDetailPage() {
           action: 'delete',
           userId: user.id,
           entityId: id,
-          description: `Deleted a line item from invoice ${purchase.invoice_number}`,
+          description: `Deleted line item (${deletedItem.quantity} units @ $${deletedItem.unit_cost.toFixed(2)} = $${(deletedItem.quantity * deletedItem.unit_cost).toFixed(2)}) from invoice ${purchase.invoice_number}`,
+          metadata: deletedItem,
         })
       }
       toast.success('Line item deleted')
@@ -356,19 +366,25 @@ export function PurchaseDetailPage() {
   })
 
   const updateAdditionalCost = useMutation({
-    mutationFn: async ({ costId, amount, notes }: { costId: string; amount: number; notes: string | null }) => {
+    mutationFn: async ({ costId, amount, notes, oldAmount, oldNotes }: { costId: string; amount: number; notes: string | null; oldAmount: number; oldNotes: string | null }) => {
       const { error } = await supabase.from('purchase_additional_costs').update({ amount, notes }).eq('id', costId)
       if (error) throw error
+      return { oldAmount, oldNotes }
     },
-    onSuccess: async () => {
+    onSuccess: async (oldValues) => {
       queryClient.invalidateQueries({ queryKey: ['purchase-additional-costs', id] })
       if (user && purchase) {
+        const changes: Record<string, { old: any; new: any }> = {}
+        if (oldValues.oldAmount !== editingCost?.amount) changes['Amount'] = { old: `$${oldValues.oldAmount.toFixed(2)}`, new: `$${editingCost?.amount.toFixed(2)}` }
+        if (oldValues.oldNotes !== editingCost?.notes) changes['Notes'] = { old: oldValues.oldNotes || 'none', new: editingCost?.notes || 'none' }
+        
         await logDashboardActivity({
           entityType: 'purchase_additional_cost',
           action: 'update',
           userId: user.id,
           entityId: id,
           description: `Updated additional cost on invoice ${purchase.invoice_number}`,
+          changes: Object.keys(changes).length > 0 ? changes : undefined,
         })
       }
       toast.success('Additional cost updated')
@@ -377,11 +393,12 @@ export function PurchaseDetailPage() {
   })
 
   const deleteAdditionalCost = useMutation({
-    mutationFn: async (costId: string) => {
+    mutationFn: async ({ costId, costData }: { costId: string; costData: any }) => {
       const { error } = await supabase.from('purchase_additional_costs').delete().eq('id', costId)
       if (error) throw error
+      return costData
     },
-    onSuccess: async () => {
+    onSuccess: async (deletedCost) => {
       queryClient.invalidateQueries({ queryKey: ['purchase-additional-costs', id] })
       if (user && purchase) {
         await logDashboardActivity({
@@ -389,7 +406,8 @@ export function PurchaseDetailPage() {
           action: 'delete',
           userId: user.id,
           entityId: id,
-          description: `Deleted additional cost on invoice ${purchase.invoice_number}`,
+          description: `Deleted ${deletedCost.cost_type.replace('_', ' ')} cost of $${deletedCost.amount.toFixed(2)} from invoice ${purchase.invoice_number}`,
+          metadata: deletedCost,
         })
       }
       toast.success('Additional cost deleted')
@@ -554,7 +572,7 @@ export function PurchaseDetailPage() {
                               className="h-8 w-8 text-destructive"
                               onClick={() => {
                                 if (!confirm('Delete this line item?')) return
-                                deleteLineItem.mutate(item.id)
+                                deleteLineItem.mutate({ itemId: item.id, itemData: item })
                               }}
                             >
                               <Trash2 className="h-4 w-4" />
@@ -631,7 +649,7 @@ export function PurchaseDetailPage() {
                               className="h-8 w-8 text-destructive"
                               onClick={() => {
                                 if (!confirm('Delete this additional cost?')) return
-                                deleteAdditionalCost.mutate(cost.id)
+                                deleteAdditionalCost.mutate({ costId: cost.id, costData: cost })
                               }}
                             >
                               <Trash2 className="h-4 w-4" />
@@ -776,7 +794,7 @@ export function PurchaseDetailPage() {
                             className="h-8 w-8 text-destructive"
                             onClick={() => {
                               if (!confirm('Delete this line item?')) return
-                              deleteLineItem.mutate(item.id)
+                              deleteLineItem.mutate({ itemId: item.id, itemData: item })
                             }}
                           >
                             <Trash2 className="h-4 w-4" />
@@ -862,7 +880,7 @@ export function PurchaseDetailPage() {
                             className="h-8 w-8 text-destructive"
                             onClick={() => {
                               if (!confirm('Delete this additional cost?')) return
-                              deleteAdditionalCost.mutate(cost.id)
+                              deleteAdditionalCost.mutate({ costId: cost.id, costData: cost })
                             }}
                           >
                             <Trash2 className="h-4 w-4" />
@@ -967,7 +985,17 @@ export function PurchaseDetailPage() {
                       toast.error('Please enter valid numbers')
                       return
                     }
-                    updateLineItem.mutate({ itemId: editingLineItem.id, quantity, unitCost, taxPercent, taxRecoverability: editLineTaxRecoverability })
+                    updateLineItem.mutate({ 
+                      itemId: editingLineItem.id, 
+                      quantity, 
+                      unitCost, 
+                      taxPercent, 
+                      taxRecoverability: editLineTaxRecoverability,
+                      oldQuantity: editingLineItem.quantity,
+                      oldUnitCost: editingLineItem.unit_cost,
+                      oldTaxPercent: editingLineItem.tax_percent,
+                      oldTaxRecoverability: editingLineItem.tax_recoverability
+                    })
                     setEditLineItemOpen(false)
                   }}
                 >
@@ -1021,7 +1049,13 @@ export function PurchaseDetailPage() {
                       toast.error('Please enter a valid amount')
                       return
                     }
-                    updateAdditionalCost.mutate({ costId: editingCost.id, amount, notes: editCostNotes || null })
+                    updateAdditionalCost.mutate({ 
+                      costId: editingCost.id, 
+                      amount, 
+                      notes: editCostNotes || null,
+                      oldAmount: editingCost.amount,
+                      oldNotes: editingCost.notes
+                    })
                     setEditCostOpen(false)
                   }}
                 >
@@ -1123,12 +1157,19 @@ function AddLineItemForm({
     onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['purchase-line-items', purchaseId] })
       if (userId) {
+        const productName = selectedProduct?.name || 'Unknown Product'
         await logDashboardActivity({
           entityType: 'purchase_line_item',
           action: 'create',
           userId,
           entityId: purchaseId,
-          description: `Added line item to invoice ${invoiceNumber}`,
+          description: `Added ${quantity} units of "${productName}" to invoice ${invoiceNumber}`,
+          metadata: {
+            product_name: productName,
+            quantity: parseInt(quantity),
+            unit_cost: parseFloat(unitCost),
+            tax_percent: parseFloat(taxPercent),
+          },
         })
       }
       toast.success('Line item added')
@@ -1182,6 +1223,7 @@ function AddLineItemForm({
                   <thead className="sticky top-0 bg-muted border-b">
                     <tr>
                       <th className="text-left p-2 md:p-3">Product Name</th>
+                      <th className="text-left p-2 md:p-3">SKU</th>
                       <th className="text-left p-2 md:p-3">Product ID</th>
                       <th className="text-left p-2 md:p-3">Action</th>
                     </tr>
@@ -1189,7 +1231,7 @@ function AddLineItemForm({
                   <tbody>
                     {filteredProducts.length === 0 ? (
                       <tr>
-                        <td colSpan={3} className="p-2 md:p-3 text-center text-muted-foreground">
+                        <td colSpan={4} className="p-2 md:p-3 text-center text-muted-foreground">
                           No products found
                         </td>
                       </tr>
@@ -1197,6 +1239,7 @@ function AddLineItemForm({
                       filteredProducts.map((p) => (
                         <tr key={p.id} className="border-b hover:bg-muted/50 transition-colors">
                           <td className="p-2 md:p-3 font-medium max-w-xs truncate">{p.name}</td>
+                          <td className="p-2 md:p-3 font-mono text-xs whitespace-nowrap">{p.sku}</td>
                           <td className="p-2 md:p-3 font-mono text-xs whitespace-nowrap">{p.product_code}</td>
                           <td className="p-2 md:p-3">
                             <Button
@@ -1294,7 +1337,12 @@ function AddCostForm({
           action: 'create',
           userId,
           entityId: purchaseId,
-          description: `Added additional cost to invoice ${invoiceNumber}`,
+          description: `Added ${costType.replace('_', ' ')} cost of $${parseFloat(amount).toFixed(2)} to invoice ${invoiceNumber}`,
+          metadata: {
+            cost_type: costType,
+            amount: parseFloat(amount),
+            notes: notes || null,
+          },
         })
       }
       toast.success('Additional cost added')
