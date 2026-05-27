@@ -188,114 +188,220 @@ export function PurchasesPage() {
   const bulkImportPurchases = useMutation({
     mutationFn: async (csvText: string) => {
       const rows = parseCSV(csvText)
-      if (rows.length === 0) {
-        throw new Error('No valid rows in CSV')
-      }
+      if (rows.length === 0) throw new Error('No valid rows in CSV')
 
-      // Build lookup maps for suppliers and products
+      // ── Lookup maps ──────────────────────────────────────────────────────
       const { data: supplierData } = await supabase.from('suppliers').select('id, name')
-      const supplierByName = new Map(supplierData?.map((s: any) => [s.name.toLowerCase(), s.id]) ?? [])
+      const supplierByName = new Map<string, string>(
+        supplierData?.map((s: any) => [s.name.toLowerCase(), s.id as string]) ?? []
+      )
 
       const { data: productData } = await supabase.from('products').select('id, sku, product_code')
-      const productBySku = new Map(productData?.map((p: any) => [p.sku.toLowerCase(), p.id]) ?? [])
-      const productByCode = new Map(productData?.map((p: any) => [p.product_code?.toLowerCase(), p.id]) ?? [])
+      const productBySku = new Map<string, string>(
+        productData?.flatMap((p: any) => p.sku ? [[p.sku.toLowerCase() as string, p.id as string]] : []) ?? []
+      )
+      const productByCode = new Map<string, string>(
+        productData?.flatMap((p: any) => p.product_code ? [[p.product_code.toLowerCase() as string, p.id as string]] : []) ?? []
+      )
 
-      const createdPurchases: any[] = []
-      let successCount = 0
-      let errorCount = 0
-      const errors: string[] = []
+      // ── Helpers ──────────────────────────────────────────────────────────
+      function normaliseDateToISO(raw: string): string {
+        const s = raw.trim()
+        if (!s) return ''
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+        const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+        if (mdy) {
+          const [, m, d, y] = mdy
+          return `${y}-${m!.padStart(2, '0')}-${d!.padStart(2, '0')}`
+        }
+        const monthMap: Record<string, string> = {
+          jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+          jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+        }
+        const dmon = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/)
+        if (dmon) {
+          const [, d, mon, yr] = dmon
+          const month = monthMap[mon!.toLowerCase()]
+          if (month) {
+            const year = yr!.length === 2 ? `20${yr}` : yr
+            return `${year}-${month}-${d!.padStart(2, '0')}`
+          }
+        }
+        return s
+      }
+
+      // ── Parse & group rows by invoice ────────────────────────────────────
+      interface ParsedLine {
+        productIdRaw: string | null
+        quantity: number
+        unitCost: number
+        taxPercent: number
+        taxRecoverability: string
+        rowIndex: number
+      }
+      interface InvoiceGroup {
+        invoiceNumber: string
+        supplierName: string
+        invoiceDate: string
+        lines: ParsedLine[]
+      }
+
+      const invoiceMap = new Map<string, InvoiceGroup>()
+      const skippedRows: string[] = []
 
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i]
         if (!row) continue
+
+        const invoiceNumber = row.invoice_number?.trim()
+        const supplierName  = row.supplier_name?.trim()
+        const invoiceDate   = normaliseDateToISO(row.invoice_date ?? '')
+
+        // Skip rows missing the three invoice-level required fields
+        if (!invoiceNumber) { skippedRows.push(`Row ${i + 2}: missing invoice number`); continue }
+        if (!supplierName)  { skippedRows.push(`Row ${i + 2}: missing supplier name`); continue }
+        if (!invoiceDate)   { skippedRows.push(`Row ${i + 2}: missing or unrecognised date`); continue }
+
+        const quantity     = parseInt(row.quantity ?? '', 10)
+        const unitCostRaw  = (row.unit_cost ?? '').replace(/[$,\s]/g, '')
+        const unitCost     = parseFloat(unitCostRaw)
+        const taxPercentRaw = (row.tax_percentage ?? row.tax_percent ?? '0').replace(/[$,\s]/g, '')
+        const taxPercent    = parseFloat(taxPercentRaw || '0') || 0
+        const taxRecoverability = (row.tax_type ?? row.tax_recoverability)?.trim() || 'recoverable'
+
+        // Skip rows with invalid quantity or cost
+        if (!Number.isFinite(quantity) || quantity <= 0) {
+          skippedRows.push(`Row ${i + 2}: invalid or missing quantity — skipped`)
+          continue
+        }
+        if (!Number.isFinite(unitCost) || unitCost < 0) {
+          skippedRows.push(`Row ${i + 2}: invalid unit cost — skipped`)
+          continue
+        }
+
+        const productIdRaw = row.product_id?.trim() || null
+
+        // Group by invoice_number + supplier (one purchase per invoice)
+        const groupKey = `${invoiceNumber}|||${supplierName.toLowerCase()}`
+        if (!invoiceMap.has(groupKey)) {
+          invoiceMap.set(groupKey, { invoiceNumber, supplierName, invoiceDate, lines: [] })
+        }
+        invoiceMap.get(groupKey)!.lines.push({
+          productIdRaw,
+          quantity,
+          unitCost,
+          taxPercent,
+          taxRecoverability,
+          rowIndex: i + 2,
+        })
+      }
+
+      if (invoiceMap.size === 0) {
+        const detail = skippedRows.length ? `\n${skippedRows.slice(0, 5).join('\n')}` : ''
+        throw new Error(`No valid rows found.${detail}`)
+      }
+
+      // ── Process each invoice group ────────────────────────────────────────
+      const createdPurchases: any[] = []
+      let successCount = 0
+      let errorCount   = 0
+      const errors: string[] = []
+
+      for (const [, group] of invoiceMap) {
         try {
-          const invoiceNumber = row.invoice_number?.trim()
-          const supplierName = row.supplier_name?.trim()
-          const invoiceDate = row.invoice_date?.trim()
-          const productId = row.product_id?.trim()
-          const quantity = parseInt(row.quantity ?? '0', 10)
-          const unitCost = parseFloat(row.unit_cost ?? '0')
-          const taxPercent = parseFloat(row.tax_percent ?? '0')
-          const taxRecoverability = row.tax_recoverability?.trim() ?? 'recoverable'
-          const notes = row.notes?.trim() ?? null
+          // Supplier must exist — skip invoice if not found
+          const supplierId = supplierByName.get(group.supplierName.toLowerCase())
+          if (!supplierId) {
+            throw new Error(`Supplier "${group.supplierName}" not found in the system`)
+          }
 
-          // Validate required fields
-          if (!invoiceNumber) throw new Error('Missing invoice_number')
-          if (!supplierName) throw new Error('Missing supplier_name')
-          if (!invoiceDate) throw new Error('Missing invoice_date')
-          if (!productId) throw new Error('Missing product_id (product code, SKU, or ID)')
-          if (!quantity || quantity <= 0) throw new Error('Invalid quantity')
-          if (!unitCost || unitCost < 0) throw new Error('Invalid unit_cost')
-
-          // Lookup supplier
-          const supplierId = supplierByName.get(supplierName.toLowerCase())
-          if (!supplierId) throw new Error(`Supplier "${supplierName}" not found`)
-
-          // Lookup product by product_code, SKU, or ID
-          let matchedProductId = productByCode.get(productId.toLowerCase()) || 
-                                  productBySku.get(productId.toLowerCase()) ||
-                                  (productData?.find((p: any) => p.id === productId)?.id)
-          if (!matchedProductId) throw new Error(`Product "${productId}" not found - use product_code, SKU, or ID`)
-
-          // Create purchase invoice
+          // Create ONE purchase per invoice number
           const { data: purchase, error: purchaseError } = await supabase
             .from('purchases')
             .insert({
-              invoice_number: invoiceNumber,
+              invoice_number: group.invoiceNumber,
               supplier_id: supplierId,
-              invoice_date: invoiceDate,
-              notes: notes,
+              invoice_date: group.invoiceDate,
               status: 'draft',
               created_by: user!.id,
             })
             .select()
             .single()
-
           if (purchaseError) throw purchaseError
 
-          // Calculate tax amount
-          const taxAmount = ((quantity * unitCost * taxPercent) / 100).toFixed(2)
+          // Create a line item for each row in this invoice
+          for (const line of group.lines) {
+            // Resolve product — auto-create if not found
+            let matchedProductId: string | undefined =
+              (line.productIdRaw ? productByCode.get(line.productIdRaw.toLowerCase()) : undefined) ??
+              (line.productIdRaw ? productBySku.get(line.productIdRaw.toLowerCase()) : undefined) ??
+              (line.productIdRaw ? productData?.find((p: any) => p.id === line.productIdRaw)?.id : undefined)
 
-          // Create purchase line item
-          const { error: lineItemError } = await supabase
-            .from('purchase_line_items')
-            .insert({
-              purchase_id: purchase.id,
-              product_id: matchedProductId,
-              quantity: quantity,
-              unit_cost: unitCost,
-              tax_percent: taxPercent,
-              tax_amount: parseFloat(taxAmount),
-              tax_recoverability: taxRecoverability,
-            })
+            if (!matchedProductId) {
+              // Auto-create a placeholder product
+              const suffix   = Date.now().toString(36).toUpperCase() +
+                               Math.random().toString(36).slice(2, 5).toUpperCase()
+              const autoSku  = line.productIdRaw ? `${line.productIdRaw}-IMP` : `MISC-${suffix}`
+              const autoName = line.productIdRaw
+                ? `${line.productIdRaw} (Auto-imported)`
+                : `Misc Item — ${group.supplierName} (${group.invoiceNumber})`
 
-          if (lineItemError) throw lineItemError
+              const { data: newProduct, error: productError } = await supabase
+                .from('products')
+                .insert({ name: autoName, sku: autoSku, status: 'active' })
+                .select()
+                .single()
+              if (productError) throw new Error(`Row ${line.rowIndex}: could not create product — ${productError.message}`)
+
+              matchedProductId = newProduct.id
+              // Cache so duplicate refs in the same import resolve instantly
+              if (line.productIdRaw) {
+                productByCode.set(line.productIdRaw.toLowerCase(), matchedProductId!)
+                productBySku.set(autoSku.toLowerCase(), matchedProductId!)
+              }
+            }
+
+            const taxAmount = parseFloat(
+              ((line.quantity * line.unitCost * line.taxPercent) / 100).toFixed(2)
+            )
+            const { error: lineItemError } = await supabase
+              .from('purchase_line_items')
+              .insert({
+                purchase_id: purchase.id,
+                product_id: matchedProductId,
+                quantity: line.quantity,
+                unit_cost: line.unitCost,
+                tax_percent: line.taxPercent,
+                tax_amount: taxAmount,
+                tax_recoverability: line.taxRecoverability,
+              })
+            if (lineItemError) throw lineItemError
+          }
 
           createdPurchases.push(purchase)
           successCount++
 
-          // Log activity
           if (user) {
             await logDashboardActivity({
               entityType: 'purchase',
               action: 'create',
               userId: user.id,
               entityId: purchase.id,
-              description: `Bulk imported purchase invoice ${invoiceNumber}`,
-              metadata: { supplier_id: supplierId, product_id: matchedProductId },
+              description: `Bulk imported purchase invoice ${group.invoiceNumber}`,
+              metadata: { supplier_id: supplierId, line_count: group.lines.length },
             })
           }
         } catch (err: any) {
           errorCount++
-          errors.push(`Row ${i + 2}: ${err.message}`)
+          errors.push(`Invoice ${group.invoiceNumber}: ${err.message}`)
         }
       }
 
       if (successCount === 0) {
-        throw new Error(`Failed to import any purchases:\n${errors.join('\n')}`)
+        throw new Error(`Failed to import any purchases:\n${errors.slice(0, 10).join('\n')}`)
       }
 
-      return { successCount, errorCount, errors, createdPurchases }
+      return { successCount, errorCount, errors: [...skippedRows, ...errors], createdPurchases }
     },
     onSuccess: async (result) => {
       queryClient.invalidateQueries({ queryKey: ['purchases'] })
