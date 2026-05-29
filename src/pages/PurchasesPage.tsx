@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Plus, Search, Download, Upload, Pencil, Trash2 } from 'lucide-react'
@@ -22,7 +22,13 @@ export function PurchasesPage() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [supplierFilter, setSupplierFilter] = useState<string>('all')
+  const [sortBy, setSortBy] = useState<string>('date-desc')
+  const [currentPage, setCurrentPage] = useState(1)
+  const PAGE_SIZE = 20
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [completeDraftsOpen, setCompleteDraftsOpen] = useState(false)
+  const [completeDraftsWarehouse, setCompleteDraftsWarehouse] = useState('')
+  const [completingDrafts, setCompletingDrafts] = useState(false)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [selectedPurchase, setSelectedPurchase] = useState<any | null>(null)
   const [importing, setImporting] = useState(false)
@@ -30,16 +36,26 @@ export function PurchasesPage() {
   const queryClient = useQueryClient()
   const { user } = useAuth()
 
+  useEffect(() => { setCurrentPage(1) }, [search, statusFilter, dateFrom, dateTo, supplierFilter, sortBy])
+
   const { data: purchases, isLoading } = useQuery({
-    queryKey: ['purchases', search, statusFilter, dateFrom, dateTo, supplierFilter],
+    queryKey: ['purchases', search, statusFilter, dateFrom, dateTo, supplierFilter, sortBy],
     queryFn: async () => {
       let query = supabase
         .from('purchases')
         .select('*, supplier:suppliers(name)')
-        .order('created_at', { ascending: false })
 
       if (search) {
-        query = query.or(`invoice_number.ilike.%${search}%`)
+        const { data: matchingSuppliers } = await supabase
+          .from('suppliers')
+          .select('id')
+          .ilike('name', `%${search}%`)
+        const supplierIds = matchingSuppliers?.map(s => s.id) ?? []
+        if (supplierIds.length > 0) {
+          query = query.or(`invoice_number.ilike.%${search}%,supplier_id.in.(${supplierIds.join(',')})`)
+        } else {
+          query = query.ilike('invoice_number', `%${search}%`)
+        }
       }
       if (statusFilter !== 'all') {
         query = query.eq('status', statusFilter)
@@ -54,6 +70,16 @@ export function PurchasesPage() {
         query = query.eq('supplier_id', supplierFilter)
       }
 
+      if (sortBy === 'date-asc') {
+        query = query.order('invoice_date', { ascending: true })
+      } else if (sortBy === 'invoice-asc') {
+        query = query.order('invoice_number', { ascending: true })
+      } else if (sortBy === 'invoice-desc') {
+        query = query.order('invoice_number', { ascending: false })
+      } else {
+        query = query.order('invoice_date', { ascending: false })
+      }
+
       const { data, error } = await query
       if (error) throw error
       return data
@@ -64,6 +90,14 @@ export function PurchasesPage() {
     queryKey: ['suppliers-active'],
     queryFn: async () => {
       const { data } = await supabase.from('suppliers').select('id, name').eq('status', 'active')
+      return data ?? []
+    },
+  })
+
+  const { data: warehouseLocations } = useQuery({
+    queryKey: ['warehouse-locations-active'],
+    queryFn: async () => {
+      const { data } = await supabase.from('warehouse_locations').select('id, name').eq('status', 'active').order('name')
       return data ?? []
     },
   })
@@ -238,6 +272,7 @@ export function PurchasesPage() {
         taxPercent: number
         taxRecoverability: string
         rowIndex: number
+        warehouseName: string
       }
       interface InvoiceGroup {
         invoiceNumber: string
@@ -268,6 +303,7 @@ export function PurchasesPage() {
         const taxPercentRaw = (row.tax_percentage ?? row.tax_percent ?? '0').replace(/[$,\s]/g, '')
         const taxPercent    = parseFloat(taxPercentRaw || '0') || 0
         const taxRecoverability = (row.tax_type ?? row.tax_recoverability)?.trim() || 'recoverable'
+        const warehouseName = row.warehouse_name?.trim() || ''
 
         // Skip rows with invalid quantity or cost
         if (!Number.isFinite(quantity) || quantity <= 0) {
@@ -293,6 +329,7 @@ export function PurchasesPage() {
           taxPercent,
           taxRecoverability,
           rowIndex: i + 2,
+          warehouseName,
         })
       }
 
@@ -329,7 +366,22 @@ export function PurchasesPage() {
             .single()
           if (purchaseError) throw purchaseError
 
-          // Create a line item for each row in this invoice
+          // ── Build warehouse lookup (lazy — only if needed) ──────────────
+          let warehouseByName: Map<string, string> | null = null
+          async function getWarehouseId(name: string): Promise<string> {
+            if (!warehouseByName) {
+              const { data: wData } = await supabase.from('warehouse_locations').select('id, name')
+              warehouseByName = new Map(wData?.map((w: any) => [w.name.toLowerCase(), w.id as string]) ?? [])
+            }
+            const id = warehouseByName.get(name.toLowerCase())
+            if (!id) throw new Error(`Warehouse "${name}" not found in the system`)
+            return id
+          }
+
+          // Create a line item for each row and capture the IDs
+          interface CreatedLI { id: string; productId: string; quantity: number; unitCost: number; taxAmount: number; warehouseName: string }
+          const createdLIs: CreatedLI[] = []
+
           for (const line of group.lines) {
             // Resolve product — auto-create if not found
             let matchedProductId: string | undefined =
@@ -338,7 +390,6 @@ export function PurchasesPage() {
               (line.productIdRaw ? productData?.find((p: any) => p.id === line.productIdRaw)?.id : undefined)
 
             if (!matchedProductId) {
-              // Auto-create a placeholder product
               const suffix   = Date.now().toString(36).toUpperCase() +
                                Math.random().toString(36).slice(2, 5).toUpperCase()
               const autoSku  = line.productIdRaw ? `${line.productIdRaw}-IMP` : `MISC-${suffix}`
@@ -354,7 +405,6 @@ export function PurchasesPage() {
               if (productError) throw new Error(`Row ${line.rowIndex}: could not create product — ${productError.message}`)
 
               matchedProductId = newProduct.id
-              // Cache so duplicate refs in the same import resolve instantly
               if (line.productIdRaw) {
                 productByCode.set(line.productIdRaw.toLowerCase(), matchedProductId!)
                 productBySku.set(autoSku.toLowerCase(), matchedProductId!)
@@ -364,7 +414,7 @@ export function PurchasesPage() {
             const taxAmount = parseFloat(
               ((line.quantity * line.unitCost * line.taxPercent) / 100).toFixed(2)
             )
-            const { error: lineItemError } = await supabase
+            const { data: insertedLI, error: lineItemError } = await supabase
               .from('purchase_line_items')
               .insert({
                 purchase_id: purchase.id,
@@ -375,7 +425,44 @@ export function PurchasesPage() {
                 tax_amount: taxAmount,
                 tax_recoverability: line.taxRecoverability,
               })
+              .select('id')
+              .single()
             if (lineItemError) throw lineItemError
+            createdLIs.push({ id: insertedLI.id, productId: matchedProductId!, quantity: line.quantity, unitCost: line.unitCost, taxAmount, warehouseName: line.warehouseName })
+          }
+
+          // ── Auto-complete if every line has a warehouse name ─────────────
+          const allHaveWarehouse = createdLIs.every(li => li.warehouseName)
+          if (allHaveWarehouse) {
+            for (const li of createdLIs) {
+              const warehouseId = await getWarehouseId(li.warehouseName)
+
+              await supabase.from('purchase_allocations').insert({
+                purchase_line_item_id: li.id,
+                warehouse_location_id: warehouseId,
+                quantity: li.quantity,
+              })
+
+              // Landed unit cost = unit cost (no additional costs in CSV import)
+              await supabase.from('purchase_line_items')
+                .update({ landed_unit_cost: li.unitCost })
+                .eq('id', li.id)
+
+              // Upsert inventory
+              const { data: existingInv } = await supabase
+                .from('inventory')
+                .select('id, quantity')
+                .eq('product_id', li.productId)
+                .eq('warehouse_location_id', warehouseId)
+                .single()
+
+              if (existingInv) {
+                await supabase.from('inventory').update({ quantity: existingInv.quantity + li.quantity }).eq('id', existingInv.id)
+              } else {
+                await supabase.from('inventory').insert({ product_id: li.productId, warehouse_location_id: warehouseId, quantity: li.quantity })
+              }
+            }
+            await supabase.from('purchases').update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', purchase.id)
           }
 
           createdPurchases.push(purchase)
@@ -387,7 +474,7 @@ export function PurchasesPage() {
               action: 'create',
               userId: user.id,
               entityId: purchase.id,
-              description: `Bulk imported purchase invoice ${group.invoiceNumber}`,
+              description: `Bulk imported purchase invoice ${group.invoiceNumber}${allHaveWarehouse ? ' (completed)' : ' (draft)'}`,
               metadata: { supplier_id: supplierId, line_count: group.lines.length },
             })
           }
@@ -401,19 +488,25 @@ export function PurchasesPage() {
         throw new Error(`Failed to import any purchases:\n${errors.slice(0, 10).join('\n')}`)
       }
 
-      return { successCount, errorCount, errors: [...skippedRows, ...errors], createdPurchases }
+      const completedCount = createdPurchases.filter((p: any) => {
+        const group = [...invoiceMap.values()].find(g => g.invoiceNumber === p.invoice_number)
+        return group?.lines.every(l => l.warehouseName)
+      }).length
+
+      return { successCount, errorCount, completedCount, errors: [...skippedRows, ...errors], createdPurchases }
     },
     onSuccess: async (result) => {
       queryClient.invalidateQueries({ queryKey: ['purchases'] })
+      queryClient.invalidateQueries({ queryKey: ['inventory'] })
       setImporting(false)
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
       }
 
-      let message = `Successfully imported ${result.successCount} purchase${result.successCount !== 1 ? 's' : ''}`
-      if (result.errorCount > 0) {
-        message += ` (${result.errorCount} failed)`
-      }
+      let message = `Imported ${result.successCount} purchase${result.successCount !== 1 ? 's' : ''}`
+      if (result.completedCount > 0) message += ` (${result.completedCount} completed → inventory updated)`
+      else message += ` — add warehouse_name to CSV to auto-complete`
+      if (result.errorCount > 0) message += `, ${result.errorCount} failed`
       toast.success(message)
 
       if (result.errors.length > 0) {
@@ -426,6 +519,104 @@ export function PurchasesPage() {
         fileInputRef.current.value = ''
       }
       toast.error(error.message || 'Failed to import purchases')
+    },
+  })
+
+  const bulkCompleteDrafts = useMutation({
+    mutationFn: async (warehouseId: string) => {
+      setCompletingDrafts(true)
+      const { data: draftPurchases } = await supabase
+        .from('purchases')
+        .select('id, invoice_number')
+        .eq('status', 'draft')
+
+      let completed = 0
+      let failed = 0
+      const errors: string[] = []
+
+      for (const purchase of draftPurchases ?? []) {
+        try {
+          const { data: lineItems } = await supabase
+            .from('purchase_line_items')
+            .select('id, product_id, quantity, unit_cost')
+            .eq('purchase_id', purchase.id)
+
+          if (!lineItems?.length) {
+            errors.push(`${purchase.invoice_number}: no line items`)
+            failed++
+            continue
+          }
+
+          for (const li of lineItems) {
+            const { data: existingAllocs } = await supabase
+              .from('purchase_allocations')
+              .select('quantity')
+              .eq('purchase_line_item_id', li.id)
+
+            const allocatedQty = existingAllocs?.reduce((sum, a) => sum + a.quantity, 0) ?? 0
+            const remaining = li.quantity - allocatedQty
+
+            if (remaining > 0) {
+              await supabase.from('purchase_allocations').insert({
+                purchase_line_item_id: li.id,
+                warehouse_location_id: warehouseId,
+                quantity: remaining,
+              })
+
+              const { data: existingInv } = await supabase
+                .from('inventory')
+                .select('id, quantity')
+                .eq('product_id', li.product_id)
+                .eq('warehouse_location_id', warehouseId)
+                .single()
+
+              if (existingInv) {
+                await supabase.from('inventory').update({ quantity: existingInv.quantity + remaining }).eq('id', existingInv.id)
+              } else {
+                await supabase.from('inventory').insert({ product_id: li.product_id, warehouse_location_id: warehouseId, quantity: remaining })
+              }
+            }
+
+            await supabase.from('purchase_line_items')
+              .update({ landed_unit_cost: li.unit_cost })
+              .eq('id', li.id)
+          }
+
+          await supabase.from('purchases')
+            .update({ status: 'completed', completed_at: new Date().toISOString() })
+            .eq('id', purchase.id)
+
+          completed++
+        } catch (err: any) {
+          failed++
+          errors.push(`${purchase.invoice_number}: ${err.message}`)
+        }
+      }
+
+      return { completed, failed, errors }
+    },
+    onSuccess: async ({ completed, failed, errors }) => {
+      queryClient.invalidateQueries({ queryKey: ['purchases'] })
+      queryClient.invalidateQueries({ queryKey: ['inventory'] })
+      setCompletingDrafts(false)
+      setCompleteDraftsOpen(false)
+      setCompleteDraftsWarehouse('')
+      toast.success(`Completed ${completed} draft purchase${completed !== 1 ? 's' : ''} — inventory updated${failed > 0 ? ` (${failed} failed)` : ''}`)
+      if (errors.length > 0) {
+        toast.error(`Some failed:\n${errors.slice(0, 3).join('\n')}`)
+      }
+      if (user) {
+        await logDashboardActivity({
+          entityType: 'purchase',
+          action: 'complete',
+          userId: user.id,
+          description: `Bulk completed ${completed} draft purchases`,
+        })
+      }
+    },
+    onError: (error: any) => {
+      setCompletingDrafts(false)
+      toast.error(error.message || 'Failed to complete drafts')
     },
   })
 
@@ -457,7 +648,8 @@ export function PurchasesPage() {
       unit_cost: '12.50',
       tax_percent: '10',
       tax_recoverability: 'recoverable',
-      notes: 'Wholesale order, includes shipping',
+      warehouse_name: 'WFS CA',
+      notes: 'Fill warehouse_name to auto-complete and update inventory',
     }, {
       invoice_number: 'INV-2026-002',
       supplier_name: 'Premium Parts Inc',
@@ -467,6 +659,7 @@ export function PurchasesPage() {
       unit_cost: '45.75',
       tax_percent: '8',
       tax_recoverability: 'recoverable',
+      warehouse_name: 'WFS CA',
       notes: 'Standard order',
     }]
     exportToCSV(templateData, 'purchases-template', [
@@ -478,6 +671,7 @@ export function PurchasesPage() {
       { key: 'unit_cost', header: 'Unit Cost *' },
       { key: 'tax_percent', header: 'Tax Percentage (%)' },
       { key: 'tax_recoverability', header: 'Tax Type (recoverable/non_recoverable)' },
+      { key: 'warehouse_name', header: 'Warehouse Name (fills inventory on import)' },
       { key: 'notes', header: 'Notes' },
     ])
     toast.success('Purchases template downloaded')
@@ -522,14 +716,21 @@ export function PurchasesPage() {
             <Download className="h-4 w-4 mr-1" />
             Template
           </Button>
-          <Button 
-            variant="outline" 
-            size="sm" 
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => fileInputRef.current?.click()}
             disabled={importing}
           >
             <Upload className="h-4 w-4 mr-1" />
             {importing ? 'Importing...' : 'Import'}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => { setCompleteDraftsWarehouse(''); setCompleteDraftsOpen(true) }}
+          >
+            Complete Drafts
           </Button>
           <input
             ref={fileInputRef}
@@ -642,7 +843,7 @@ export function PurchasesPage() {
         <div className="relative w-full sm:flex-1 sm:min-w-[200px] sm:max-w-sm">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search by invoice number..."
+            placeholder="Search by invoice # or supplier name..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
@@ -667,6 +868,17 @@ export function PurchasesPage() {
             {suppliers?.map((s) => (
               <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
             ))}
+          </SelectContent>
+        </Select>
+        <Select value={sortBy} onValueChange={setSortBy}>
+          <SelectTrigger className="w-[calc(50%-6px)] sm:w-[160px]">
+            <SelectValue placeholder="Sort" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="date-desc">Date (Newest)</SelectItem>
+            <SelectItem value="date-asc">Date (Oldest)</SelectItem>
+            <SelectItem value="invoice-asc">Invoice (A–Z)</SelectItem>
+            <SelectItem value="invoice-desc">Invoice (Z–A)</SelectItem>
           </SelectContent>
         </Select>
         <div className="flex items-center gap-2">
@@ -695,77 +907,127 @@ export function PurchasesPage() {
         <div className="flex justify-center py-8">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
         </div>
-      ) : (
-        <div className="rounded-md border overflow-x-auto">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Invoice #</TableHead>
-                <TableHead>Supplier</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {purchases?.length === 0 ? (
+      ) : (() => {
+        const totalPages = Math.ceil((purchases?.length ?? 0) / PAGE_SIZE)
+        const paged = purchases?.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+        return (
+          <div className="rounded-md border overflow-x-auto">
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                    No purchases found. Create your first purchase invoice.
-                  </TableCell>
+                  <TableHead>Invoice #</TableHead>
+                  <TableHead>Supplier</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              ) : (
-                purchases?.map((purchase: any) => (
-                  <TableRow key={purchase.id}>
-                    <TableCell>
-                      <Link
-                        to={`/purchases/${purchase.id}`}
-                        className="font-medium font-mono hover:underline"
-                      >
-                        {purchase.invoice_number}
-                      </Link>
-                    </TableCell>
-                    <TableCell>{purchase.supplier?.name ?? '—'}</TableCell>
-                    <TableCell>{new Date(purchase.invoice_date).toLocaleDateString()}</TableCell>
-                    <TableCell>
-                      <Badge variant={purchase.status === 'completed' ? 'success' : 'secondary'}>
-                        {purchase.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {new Date(purchase.created_at).toLocaleDateString()}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="inline-flex items-center gap-1">
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-8 w-8"
-                          onClick={() => openEditDialog(purchase)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-8 w-8 text-destructive"
-                          onClick={() => {
-                            if (!confirm(`Permanently delete invoice ${purchase.invoice_number}?${purchase.status === 'completed' ? ' Inventory will be reverted.' : ''}`)) return
-                            deletePurchase.mutate({ id: purchase.id, invoiceNumber: purchase.invoice_number })
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
+              </TableHeader>
+              <TableBody>
+                {paged?.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                      No purchases found. Create your first purchase invoice.
                     </TableCell>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
-      )}
+                ) : (
+                  paged?.map((purchase: any) => (
+                    <TableRow key={purchase.id}>
+                      <TableCell>
+                        <Link
+                          to={`/purchases/${purchase.id}`}
+                          className="font-medium font-mono hover:underline"
+                        >
+                          {purchase.invoice_number}
+                        </Link>
+                      </TableCell>
+                      <TableCell>{purchase.supplier?.name ?? '—'}</TableCell>
+                      <TableCell>{new Date(purchase.invoice_date).toLocaleDateString()}</TableCell>
+                      <TableCell>
+                        <Badge variant={purchase.status === 'completed' ? 'success' : 'secondary'}>
+                          {purchase.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {new Date(purchase.created_at).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="inline-flex items-center gap-1">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8"
+                            onClick={() => openEditDialog(purchase)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-destructive"
+                            onClick={() => {
+                              if (!confirm(`Permanently delete invoice ${purchase.invoice_number}?${purchase.status === 'completed' ? ' Inventory will be reverted.' : ''}`)) return
+                              deletePurchase.mutate({ id: purchase.id, invoiceNumber: purchase.invoice_number })
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-4 py-3 border-t">
+                <span className="text-sm text-muted-foreground">
+                  {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, purchases!.length)} of {purchases!.length}
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>Previous</Button>
+                  <span className="text-sm">{currentPage} / {totalPages}</span>
+                  <Button size="sm" variant="outline" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>Next</Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      })()}
+
+      {/* Complete Drafts Dialog */}
+      <Dialog open={completeDraftsOpen} onOpenChange={setCompleteDraftsOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Complete All Draft Purchases</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              This will allocate all unallocated draft purchases to the selected warehouse, mark them as completed, and update inventory quantities.
+            </p>
+            <div className="space-y-2">
+              <Label>Warehouse *</Label>
+              <Select value={completeDraftsWarehouse} onValueChange={setCompleteDraftsWarehouse}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select warehouse" />
+                </SelectTrigger>
+                <SelectContent>
+                  {warehouseLocations?.map((w) => (
+                    <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              className="w-full"
+              disabled={!completeDraftsWarehouse || completingDrafts || bulkCompleteDrafts.isPending}
+              onClick={() => bulkCompleteDrafts.mutate(completeDraftsWarehouse)}
+            >
+              {bulkCompleteDrafts.isPending ? 'Processing...' : 'Complete All Drafts & Update Inventory'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

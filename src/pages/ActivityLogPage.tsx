@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/contexts/AuthContext'
 import { Card, CardContent } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -11,14 +12,30 @@ import { Download } from 'lucide-react'
 import { exportToCSV } from '@/lib/csv'
 import { toast } from 'sonner'
 
+const PAGE_SIZE = 20
+
 export function ActivityLogPage() {
+  const { user } = useAuth()
   const [entityType, setEntityType] = useState<string>('all')
   const [actionType, setActionType] = useState<string>('all')
+  const [userFilter, setUserFilter] = useState<string>('all')
+  const [sortDirection, setSortDirection] = useState<'desc' | 'asc'>('desc')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+
+  useEffect(() => { setCurrentPage(1) }, [entityType, actionType, userFilter, sortDirection, dateFrom, dateTo])
+
+  const { data: users } = useQuery({
+    queryKey: ['users-list'],
+    queryFn: async () => {
+      const { data } = await supabase.from('users').select('id, full_name, email').order('full_name')
+      return data ?? []
+    },
+  })
 
   const { data: activityLogs, isLoading } = useQuery({
-    queryKey: ['dashboard-activity-log', entityType, actionType, dateFrom, dateTo],
+    queryKey: ['dashboard-activity-log', entityType, actionType, userFilter, sortDirection, dateFrom, dateTo],
     queryFn: async () => {
       let query = supabase
         .from('dashboard_activity_log')
@@ -30,6 +47,11 @@ export function ActivityLogPage() {
       if (actionType !== 'all') {
         query = query.eq('action', actionType)
       }
+      if (userFilter === 'me') {
+        query = query.eq('user_id', user!.id)
+      } else if (userFilter !== 'all') {
+        query = query.eq('user_id', userFilter)
+      }
       if (dateFrom) {
         query = query.gte('created_at', dateFrom)
       }
@@ -37,11 +59,14 @@ export function ActivityLogPage() {
         query = query.lte('created_at', dateTo + 'T23:59:59')
       }
 
-      const { data, error } = await query.order('created_at', { ascending: false }).limit(200)
+      const { data, error } = await query.order('created_at', { ascending: sortDirection === 'asc' }).limit(500)
       if (error) throw error
       return data ?? []
     },
   })
+
+  const totalPages = Math.ceil((activityLogs?.length ?? 0) / PAGE_SIZE)
+  const pagedLogs = activityLogs?.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
   const typeColors: Record<string, string> = {
     create: 'success',
@@ -100,7 +125,7 @@ export function ActivityLogPage() {
           </SelectContent>
         </Select>
         <Select value={actionType} onValueChange={setActionType}>
-          <SelectTrigger className="w-full sm:w-[160px]">
+          <SelectTrigger className="w-full sm:w-[140px]">
             <SelectValue placeholder="Action" />
           </SelectTrigger>
           <SelectContent>
@@ -109,6 +134,27 @@ export function ActivityLogPage() {
             <SelectItem value="update">Update</SelectItem>
             <SelectItem value="delete">Delete</SelectItem>
             <SelectItem value="complete">Complete</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={userFilter} onValueChange={setUserFilter}>
+          <SelectTrigger className="w-full sm:w-[160px]">
+            <SelectValue placeholder="User" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Users</SelectItem>
+            <SelectItem value="me">My Activity</SelectItem>
+            {users?.filter(u => u.id !== user?.id).map((u) => (
+              <SelectItem key={u.id} value={u.id}>{u.full_name ?? u.email}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={sortDirection} onValueChange={(v) => setSortDirection(v as 'desc' | 'asc')}>
+          <SelectTrigger className="w-full sm:w-[150px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="desc">Newest First</SelectItem>
+            <SelectItem value="asc">Oldest First</SelectItem>
           </SelectContent>
         </Select>
         <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-[calc(50%-6px)] sm:w-[160px]" />
@@ -134,14 +180,14 @@ export function ActivityLogPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {activityLogs?.length === 0 ? (
+                {pagedLogs?.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
                       No activity found
                     </TableCell>
                   </TableRow>
                 ) : (
-                  activityLogs?.map((log: any) => (
+                  pagedLogs?.map((log: any) => (
                     <TableRow key={log.id}>
                       <TableCell className="text-sm whitespace-nowrap">
                         {new Date(log.created_at).toLocaleString()}
@@ -159,6 +205,18 @@ export function ActivityLogPage() {
                 )}
               </TableBody>
             </Table>
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-2 py-3 border-t">
+                <span className="text-sm text-muted-foreground">
+                  {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, activityLogs!.length)} of {activityLogs!.length}
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>Previous</Button>
+                  <span className="text-sm">{currentPage} / {totalPages}</span>
+                  <Button size="sm" variant="outline" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>Next</Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

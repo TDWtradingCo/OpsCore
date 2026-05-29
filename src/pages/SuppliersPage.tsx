@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Search, Download, Trash2, Pencil } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -18,19 +18,23 @@ import { logDashboardActivity } from '@/lib/audit'
 export function SuppliersPage() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [sortBy, setSortBy] = useState<string>('name-asc')
+  const [currentPage, setCurrentPage] = useState(1)
+  const PAGE_SIZE = 20
   const [dialogOpen, setDialogOpen] = useState(false)
   const [bulkImportOpen, setBulkImportOpen] = useState(false)
   const [editingSupplier, setEditingSupplier] = useState<any>(null)
   const queryClient = useQueryClient()
   const { user } = useAuth()
 
+  useEffect(() => { setCurrentPage(1) }, [search, statusFilter, sortBy])
+
   const { data: suppliers, isLoading } = useQuery({
-    queryKey: ['suppliers', search, statusFilter],
+    queryKey: ['suppliers', search, statusFilter, sortBy],
     queryFn: async () => {
       let query = supabase
         .from('suppliers')
         .select('*')
-        .order('name')
 
       if (search) {
         query = query.or(`name.ilike.%${search}%,short_name.ilike.%${search}%`)
@@ -39,11 +43,24 @@ export function SuppliersPage() {
         query = query.eq('status', statusFilter)
       }
 
+      if (sortBy === 'name-desc') {
+        query = query.order('name', { ascending: false })
+      } else if (sortBy === 'created-desc') {
+        query = query.order('created_at', { ascending: false })
+      } else if (sortBy === 'created-asc') {
+        query = query.order('created_at', { ascending: true })
+      } else {
+        query = query.order('name', { ascending: true })
+      }
+
       const { data, error } = await query
       if (error) throw error
       return data
     },
   })
+
+  const totalSupplierPages = Math.ceil((suppliers?.length ?? 0) / PAGE_SIZE)
+  const pagedSuppliers = suppliers?.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
   const deleteSupplier = useMutation({
     mutationFn: async ({ id, name }: { id: string; name: string }) => {
@@ -159,6 +176,17 @@ export function SuppliersPage() {
             <SelectItem value="inactive">Inactive</SelectItem>
           </SelectContent>
         </Select>
+        <Select value={sortBy} onValueChange={setSortBy}>
+          <SelectTrigger className="w-full sm:w-[160px]">
+            <SelectValue placeholder="Sort" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="name-asc">Name (A–Z)</SelectItem>
+            <SelectItem value="name-desc">Name (Z–A)</SelectItem>
+            <SelectItem value="created-desc">Newest First</SelectItem>
+            <SelectItem value="created-asc">Oldest First</SelectItem>
+          </SelectContent>
+        </Select>
         {suppliers && (
           <span className="text-sm text-muted-foreground">{suppliers.length} supplier{suppliers.length !== 1 ? 's' : ''}</span>
         )}
@@ -182,14 +210,14 @@ export function SuppliersPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {suppliers?.length === 0 ? (
+              {pagedSuppliers?.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                     No suppliers found.
                   </TableCell>
                 </TableRow>
               ) : (
-                suppliers?.map((supplier) => (
+                pagedSuppliers?.map((supplier) => (
                   <TableRow key={supplier.id}>
                     <TableCell className="font-medium">{supplier.name}</TableCell>
                     <TableCell>{supplier.short_name ?? '—'}</TableCell>
@@ -232,6 +260,18 @@ export function SuppliersPage() {
               )}
             </TableBody>
           </Table>
+          {totalSupplierPages > 1 && (
+            <div className="flex items-center justify-between px-4 py-3 border-t">
+              <span className="text-sm text-muted-foreground">
+                {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, suppliers!.length)} of {suppliers!.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>Previous</Button>
+                <span className="text-sm">{currentPage} / {totalSupplierPages}</span>
+                <Button size="sm" variant="outline" onClick={() => setCurrentPage(p => Math.min(totalSupplierPages, p + 1))} disabled={currentPage === totalSupplierPages}>Next</Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

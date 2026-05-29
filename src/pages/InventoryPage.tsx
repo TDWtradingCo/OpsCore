@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '@/lib/supabase'
@@ -23,6 +23,12 @@ export function InventoryPage() {
   const [adjustDialogOpen, setAdjustDialogOpen] = useState(false)
   const [transferDialogOpen, setTransferDialogOpen] = useState(false)
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false)
+  const [summaryPage, setSummaryPage] = useState(1)
+  const [locationPage, setLocationPage] = useState(1)
+  const [movementsPage, setMovementsPage] = useState(1)
+  const PAGE_SIZE = 20
+
+  useEffect(() => { setSummaryPage(1); setLocationPage(1) }, [search, warehouseFilter])
 
   const { data: warehouseLocations } = useQuery({
     queryKey: ['warehouse-locations-filter'],
@@ -98,6 +104,8 @@ export function InventoryPage() {
   const [moveDateFrom, setMoveDateFrom] = useState('')
   const [moveDateTo, setMoveDateTo] = useState('')
 
+  useEffect(() => { setMovementsPage(1) }, [movementType, moveDateFrom, moveDateTo])
+
   const { data: movements } = useQuery({
     queryKey: ['inventory-movements', movementType, moveDateFrom, moveDateTo],
     queryFn: async () => {
@@ -147,6 +155,17 @@ export function InventoryPage() {
     }
     return acc
   }, {})
+
+  const summaryItems = Object.values(inventorySummary ?? {})
+  const totalSummaryPages = Math.ceil(summaryItems.length / PAGE_SIZE)
+  const pagedSummary = summaryItems.slice((summaryPage - 1) * PAGE_SIZE, summaryPage * PAGE_SIZE)
+
+  const locationItems = inventory?.filter((inv: any) => inv.quantity > 0) ?? []
+  const totalLocationPages = Math.ceil(locationItems.length / PAGE_SIZE)
+  const pagedLocation = locationItems.slice((locationPage - 1) * PAGE_SIZE, locationPage * PAGE_SIZE)
+
+  const totalMovementsPages = Math.ceil((movements?.length ?? 0) / PAGE_SIZE)
+  const pagedMovements = movements?.slice((movementsPage - 1) * PAGE_SIZE, movementsPage * PAGE_SIZE)
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -268,16 +287,16 @@ export function InventoryPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {!inventorySummary || Object.keys(inventorySummary).length === 0 ? (
+                  {pagedSummary.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
                         No inventory records found
                       </TableCell>
                     </TableRow>
                   ) : (
-                    Object.values(inventorySummary).map((item: any) => (
+                    pagedSummary.map((item: any) => (
                       <TableRow key={item.product.id} className="cursor-pointer hover:bg-muted/50">
-                        <TableCell 
+                        <TableCell
                           className="font-medium text-primary hover:underline"
                           onClick={() => navigate(`/inventory/${item.productId}`)}
                         >
@@ -294,6 +313,18 @@ export function InventoryPage() {
                   )}
                 </TableBody>
               </Table>
+              {totalSummaryPages > 1 && (
+                <div className="flex items-center justify-between px-2 py-3 border-t">
+                  <span className="text-sm text-muted-foreground">
+                    {(summaryPage - 1) * PAGE_SIZE + 1}–{Math.min(summaryPage * PAGE_SIZE, summaryItems.length)} of {summaryItems.length}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setSummaryPage(p => Math.max(1, p - 1))} disabled={summaryPage === 1}>Previous</Button>
+                    <span className="text-sm">{summaryPage} / {totalSummaryPages}</span>
+                    <Button size="sm" variant="outline" onClick={() => setSummaryPage(p => Math.min(totalSummaryPages, p + 1))} disabled={summaryPage === totalSummaryPages}>Next</Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -317,19 +348,19 @@ export function InventoryPage() {
                     <TableRow>
                       <TableCell colSpan={4} className="text-center py-8">Loading...</TableCell>
                     </TableRow>
-                  ) : inventory?.length === 0 ? (
+                  ) : locationItems.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
                         No inventory records found
                       </TableCell>
                     </TableRow>
                   ) : (
-                    inventory?.filter((inv: any) => inv.quantity > 0).map((inv: any) => {
+                    pagedLocation.map((inv: any) => {
                       const taxKey = `${inv.product_id}-${inv.warehouse_location_id}`
                       const taxAmount = inventoryTaxMap?.[taxKey] ?? 0
                       return (
                         <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50">
-                          <TableCell 
+                          <TableCell
                             className="font-medium text-primary hover:underline"
                             onClick={() => navigate(`/inventory/${inv.product_id}`)}
                           >
@@ -346,6 +377,18 @@ export function InventoryPage() {
                   )}
                 </TableBody>
               </Table>
+              {totalLocationPages > 1 && (
+                <div className="flex items-center justify-between px-2 py-3 border-t">
+                  <span className="text-sm text-muted-foreground">
+                    {(locationPage - 1) * PAGE_SIZE + 1}–{Math.min(locationPage * PAGE_SIZE, locationItems.length)} of {locationItems.length}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setLocationPage(p => Math.max(1, p - 1))} disabled={locationPage === 1}>Previous</Button>
+                    <span className="text-sm">{locationPage} / {totalLocationPages}</span>
+                    <Button size="sm" variant="outline" onClick={() => setLocationPage(p => Math.min(totalLocationPages, p + 1))} disabled={locationPage === totalLocationPages}>Next</Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -409,14 +452,14 @@ export function InventoryPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {movements?.length === 0 ? (
+                  {pagedMovements?.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                         No movement history
                       </TableCell>
                     </TableRow>
                   ) : (
-                    movements?.map((mov: any) => (
+                    pagedMovements?.map((mov: any) => (
                       <TableRow key={mov.id}>
                         <TableCell className="text-sm">
                           {new Date(mov.created_at).toLocaleString()}
@@ -435,6 +478,18 @@ export function InventoryPage() {
                 </TableBody>
               </Table>
               </div>
+              {totalMovementsPages > 1 && (
+                <div className="flex items-center justify-between px-2 py-3 border-t">
+                  <span className="text-sm text-muted-foreground">
+                    {(movementsPage - 1) * PAGE_SIZE + 1}–{Math.min(movementsPage * PAGE_SIZE, movements!.length)} of {movements!.length}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setMovementsPage(p => Math.max(1, p - 1))} disabled={movementsPage === 1}>Previous</Button>
+                    <span className="text-sm">{movementsPage} / {totalMovementsPages}</span>
+                    <Button size="sm" variant="outline" onClick={() => setMovementsPage(p => Math.min(totalMovementsPages, p + 1))} disabled={movementsPage === totalMovementsPages}>Next</Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

@@ -466,6 +466,13 @@ export function PurchaseDetailPage() {
   // Total landed cost across all items
   const totalLandedCost = lineItems?.reduce((sum, li) => sum + getLineItemLandedCost(li), 0) ?? 0
 
+  // Unit landed cost: use stored value for completed purchases, calculate on-the-fly for draft
+  const getUnitLandedCost = (item: any) => {
+    if (item.landed_unit_cost) return item.landed_unit_cost
+    if (!item.quantity) return 0
+    return getLineItemLandedCost(item) / item.quantity
+  }
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex flex-wrap items-center gap-3">
@@ -621,8 +628,11 @@ export function PurchaseDetailPage() {
                           <div>
                             <span className="text-muted-foreground">Tax Type:</span> <Badge variant={item.tax_recoverability === 'recoverable' ? 'outline' : 'destructive'} className="text-xs">{item.tax_recoverability === 'recoverable' ? 'Recoverable' : 'Non-Rec'}</Badge>
                           </div>
-                          <div className="col-span-2">
-                            <span className="text-muted-foreground">Landed Cost:</span> <span className="font-medium">{formatCurrency((item.unit_cost * item.quantity) + item.tax_amount)}</span>
+                          <div>
+                            <span className="text-muted-foreground">Unit Landed:</span> <span className="font-medium text-primary">{formatCurrency(getUnitLandedCost(item))}</span>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Total Landed:</span> <span className="font-medium">{formatCurrency(getLineItemLandedCost(item))}</span>
                           </div>
                         </div>
                       </div>
@@ -767,14 +777,15 @@ export function PurchaseDetailPage() {
                 <TableHead>Tax Type</TableHead>
                 <TableHead className="text-right">Weight %</TableHead>
                 <TableHead className="text-right">Allocated Cost</TableHead>
-                <TableHead className="text-right">Landed Cost</TableHead>
+                <TableHead className="text-right">Unit Landed Cost</TableHead>
+                <TableHead className="text-right">Total Landed</TableHead>
                 {isDraft && <TableHead className="text-right">Actions</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
               {lineItems?.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={isDraft ? 10 : 9} className="text-center text-muted-foreground">
+                  <TableCell colSpan={isDraft ? 11 : 10} className="text-center text-muted-foreground">
                     No line items. Add products to this purchase.
                   </TableCell>
                 </TableRow>
@@ -801,6 +812,9 @@ export function PurchaseDetailPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       {formatCurrency(getAllocatedAdditionalCost(item.quantity))}
+                    </TableCell>
+                    <TableCell className="text-right font-medium text-primary">
+                      {formatCurrency(getUnitLandedCost(item))}
                     </TableCell>
                     <TableCell className="text-right font-medium">
                       {formatCurrency(getLineItemLandedCost(item))}

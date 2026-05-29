@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Plus, Search, Download, Upload, Edit, Trash2 } from 'lucide-react'
@@ -20,7 +20,11 @@ export function ProductsPage() {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [sortBy, setSortBy] = useState<string>('created-desc')
+  const [currentPage, setCurrentPage] = useState(1)
+  const PAGE_SIZE = 20
   const [dialogOpen, setDialogOpen] = useState(false)
+
+  useEffect(() => { setCurrentPage(1) }, [search, statusFilter, sortBy])
   const [importing, setImporting] = useState(false)
   const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set())
   const [editDialogOpen, setEditDialogOpen] = useState(false)
@@ -299,6 +303,9 @@ export function ProductsPage() {
     }
   }
 
+  const totalProductPages = Math.ceil((products?.length ?? 0) / PAGE_SIZE)
+  const pagedProducts = products?.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -503,14 +510,14 @@ export function ProductsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {products?.length === 0 ? (
+              {pagedProducts?.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
                     No products found. Create your first product to get started.
                   </TableCell>
                 </TableRow>
               ) : (
-                products?.map((product) => (
+                pagedProducts?.map((product) => (
                   <TableRow key={product.id} className={selectedProducts.has(product.id) ? 'bg-muted' : ''}>
                     <TableCell className="w-[50px]">
                       <input
@@ -552,6 +559,18 @@ export function ProductsPage() {
               )}
             </TableBody>
           </Table>
+          {totalProductPages > 1 && (
+            <div className="flex items-center justify-between px-4 py-3 border-t">
+              <span className="text-sm text-muted-foreground">
+                {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, products!.length)} of {products!.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>Previous</Button>
+                <span className="text-sm">{currentPage} / {totalProductPages}</span>
+                <Button size="sm" variant="outline" onClick={() => setCurrentPage(p => Math.min(totalProductPages, p + 1))} disabled={currentPage === totalProductPages}>Next</Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
