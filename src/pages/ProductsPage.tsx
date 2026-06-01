@@ -571,9 +571,9 @@ export function ProductsPage() {
                   : `Permanently delete ${count} products from database? This cannot be undone.`
 
                 if (confirm(message)) {
-                  if (count === 1) {
+                  if (count === 1 && selectedIds[0]) {
                     deleteProduct.mutate(selectedIds[0])
-                  } else {
+                  } else if (count > 1) {
                     bulkDeleteProducts.mutate(selectedIds)
                   }
                 }
