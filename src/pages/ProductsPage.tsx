@@ -538,7 +538,7 @@ export function ProductsPage() {
                     const productId = Array.from(selectedProducts)[0]
                     const selectedProd = products?.find((p) => p.id === productId)
                     if (selectedProd) {
-                      exportToCSV([selectedProd], `product-${selectedProd.sku}`, [
+                      exportToCSV([selectedProd], `product-${selectedProd.sku || selectedProd.id}`, [
                         { key: 'name', header: 'Name' },
                         { key: 'sku', header: 'SKU' },
                         { key: 'product_code', header: 'Product ID' },
