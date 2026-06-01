@@ -515,73 +515,75 @@ export function ProductsPage() {
               Clear
             </Button>
           </div>
-          {selectedProducts.size === 1 && (
-            <div className="flex gap-2 pt-2 border-t flex-wrap">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  const productId = Array.from(selectedProducts)[0]
-                  setEditingProduct(products?.find((p) => p.id === productId))
-                  setEditDialogOpen(true)
-                }}
-                className="gap-1"
-              >
-                <Edit className="h-3.5 w-3.5" />
-                Edit
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="text-destructive hover:text-destructive gap-1"
-                onClick={() => {
-                  const selectedIds = Array.from(selectedProducts)
-                  const count = selectedIds.length
-                  if (count === 0) return
-
-                  const message = count === 1
-                    ? 'Permanently delete this product from database? This cannot be undone.'
-                    : `Permanently delete ${count} products from database? This cannot be undone.`
-
-                  if (confirm(message)) {
-                    if (count === 1) {
-                      deleteProduct.mutate(selectedIds[0])
-                    } else {
-                      bulkDeleteProducts.mutate(selectedIds)
+          <div className="flex gap-2 pt-2 border-t flex-wrap">
+            {selectedProducts.size === 1 && (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    const productId = Array.from(selectedProducts)[0]
+                    setEditingProduct(products?.find((p) => p.id === productId))
+                    setEditDialogOpen(true)
+                  }}
+                  className="gap-1"
+                >
+                  <Edit className="h-3.5 w-3.5" />
+                  Edit
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    const productId = Array.from(selectedProducts)[0]
+                    const selectedProd = products?.find((p) => p.id === productId)
+                    if (selectedProd) {
+                      exportToCSV([selectedProd], `product-${selectedProd.sku}`, [
+                        { key: 'name', header: 'Name' },
+                        { key: 'sku', header: 'SKU' },
+                        { key: 'product_code', header: 'Product ID' },
+                        { key: 'status', header: 'Status' },
+                        { key: 'brand', header: 'Brand' },
+                        { key: 'upc_gtin', header: 'UPC/GTIN' },
+                        { key: 'weight', header: 'Weight' },
+                      ])
+                      toast.success('Product exported')
                     }
+                  }}
+                  className="gap-1"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Export
+                </Button>
+              </>
+            )}
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-destructive hover:text-destructive gap-1"
+              onClick={() => {
+                const selectedIds = Array.from(selectedProducts)
+                const count = selectedIds.length
+                if (count === 0) return
+
+                const message = count === 1
+                  ? 'Permanently delete this product from database? This cannot be undone.'
+                  : `Permanently delete ${count} products from database? This cannot be undone.`
+
+                if (confirm(message)) {
+                  if (count === 1) {
+                    deleteProduct.mutate(selectedIds[0])
+                  } else {
+                    bulkDeleteProducts.mutate(selectedIds)
                   }
-                }}
-                disabled={deleteProduct.isPending || bulkDeleteProducts.isPending}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                Delete {selectedProducts.size > 1 && `(${selectedProducts.size})`}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  const productId = Array.from(selectedProducts)[0]
-                  const selectedProd = products?.find((p) => p.id === productId)
-                  if (selectedProd) {
-                    exportToCSV([selectedProd], `product-${selectedProd.sku}`, [
-                      { key: 'name', header: 'Name' },
-                      { key: 'sku', header: 'SKU' },
-                      { key: 'product_code', header: 'Product ID' },
-                      { key: 'status', header: 'Status' },
-                      { key: 'brand', header: 'Brand' },
-                      { key: 'upc_gtin', header: 'UPC/GTIN' },
-                      { key: 'weight', header: 'Weight' },
-                    ])
-                    toast.success('Product exported')
-                  }
-                }}
-                className="gap-1"
-              >
-                <Download className="h-3.5 w-3.5" />
-                Export
-              </Button>
-            </div>
-          )}
+                }
+              }}
+              disabled={deleteProduct.isPending || bulkDeleteProducts.isPending}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete {selectedProducts.size > 1 && `(${selectedProducts.size})`}
+            </Button>
+          </div>
         </div>
       )}
 
