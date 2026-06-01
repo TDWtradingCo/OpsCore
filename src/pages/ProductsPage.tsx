@@ -207,18 +207,56 @@ export function ProductsPage() {
 
   const deleteProduct = useMutation({
     mutationFn: async (productId: string) => {
+      // Get product to check if it's a Misc Item
+      const { data: product } = await supabase
+        .from('products')
+        .select('name')
+        .eq('id', productId)
+        .single()
+
+      const isMiscItem = product?.name?.includes('Misc Item')
+
       // Check if product has any inventory or purchase line items
       const { data: inventoryItems } = await supabase
         .from('inventory')
         .select('id')
         .eq('product_id', productId)
-      
+
       const { data: purchaseItems } = await supabase
         .from('purchase_line_items')
-        .select('id')
+        .select('id, purchase_id')
         .eq('product_id', productId)
 
-      if ((inventoryItems?.length ?? 0) > 0 || (purchaseItems?.length ?? 0) > 0) {
+      // For Misc Item products, cascade delete all related records
+      if (isMiscItem && ((inventoryItems?.length ?? 0) > 0 || (purchaseItems?.length ?? 0) > 0)) {
+        // Delete allocations
+        const purchaseItemIds = purchaseItems?.map(p => p.id) ?? []
+        if (purchaseItemIds.length > 0) {
+          await supabase.from('purchase_allocations').delete().in('purchase_line_item_id', purchaseItemIds)
+        }
+
+        // Delete line items
+        if (purchaseItems && purchaseItems.length > 0) {
+          const purchaseIds = [...new Set(purchaseItems.map(p => p.purchase_id))]
+          await supabase.from('purchase_line_items').delete().eq('product_id', productId)
+
+          // Delete empty purchases
+          for (const pId of purchaseIds) {
+            const { data: remaining } = await supabase
+              .from('purchase_line_items')
+              .select('id')
+              .eq('purchase_id', pId)
+            if (!remaining || remaining.length === 0) {
+              await supabase.from('purchases').delete().eq('id', pId)
+            }
+          }
+        }
+
+        // Delete inventory
+        if (inventoryItems && inventoryItems.length > 0) {
+          await supabase.from('inventory').delete().eq('product_id', productId)
+        }
+      } else if ((inventoryItems?.length ?? 0) > 0 || (purchaseItems?.length ?? 0) > 0) {
         throw new Error('Cannot delete product with existing inventory or purchase records. Please archive it instead.')
       }
 
