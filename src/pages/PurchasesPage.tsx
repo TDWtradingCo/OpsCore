@@ -230,12 +230,15 @@ export function PurchasesPage() {
         supplierData?.map((s: any) => [s.name.toLowerCase(), s.id as string]) ?? []
       )
 
-      const { data: productData } = await supabase.from('products').select('id, sku, product_code')
+      const { data: productData } = await supabase.from('products').select('id, sku, product_code, name')
       const productBySku = new Map<string, string>(
         productData?.flatMap((p: any) => p.sku ? [[p.sku.toLowerCase() as string, p.id as string]] : []) ?? []
       )
       const productByCode = new Map<string, string>(
         productData?.flatMap((p: any) => p.product_code ? [[p.product_code.toLowerCase() as string, p.id as string]] : []) ?? []
+      )
+      const productByName = new Map<string, string>(
+        productData?.flatMap((p: any) => p.name ? [[p.name.toLowerCase() as string, p.id as string]] : []) ?? []
       )
 
       // ── Helpers ──────────────────────────────────────────────────────────
@@ -338,86 +341,128 @@ export function PurchasesPage() {
         throw new Error(`No valid rows found.${detail}`)
       }
 
-      // ── Process each invoice group ────────────────────────────────────────
-      const createdPurchases: any[] = []
+      // ── Warehouse lookup (lazy, shared across all invoice groups) ────────
+      let warehouseByName: Map<string, string> | null = null
+      async function getWarehouseId(name: string): Promise<string> {
+        if (!warehouseByName) {
+          const { data: wData } = await supabase.from('warehouse_locations').select('id, name')
+          warehouseByName = new Map(wData?.map((w: any) => [w.name.toLowerCase(), w.id as string]) ?? [])
+        }
+        const wid = warehouseByName.get(name.toLowerCase())
+        if (!wid) throw new Error(`Warehouse "${name}" not found in the system`)
+        return wid
+      }
+
+      // ── Process each invoice group (upsert: update if exists, create if new) ──
+      interface CreatedLI { id: string; productId: string; quantity: number; unitCost: number; warehouseName: string }
+
+      const processedPurchases: any[] = []
       let successCount = 0
+      let updatedCount = 0
       let errorCount   = 0
       const errors: string[] = []
 
       for (const [, group] of invoiceMap) {
         try {
-          // Supplier must exist — skip invoice if not found
           const supplierId = supplierByName.get(group.supplierName.toLowerCase())
           if (!supplierId) {
             throw new Error(`Supplier "${group.supplierName}" not found in the system`)
           }
 
-          // Create ONE purchase per invoice number
-          const { data: purchase, error: purchaseError } = await supabase
+          // ── Check if this invoice already exists ─────────────────────────
+          const { data: existingPurchase } = await supabase
             .from('purchases')
-            .insert({
-              invoice_number: group.invoiceNumber,
-              supplier_id: supplierId,
-              invoice_date: group.invoiceDate,
-              status: 'draft',
-              created_by: user!.id,
-            })
-            .select()
-            .single()
-          if (purchaseError) throw purchaseError
+            .select('id, status')
+            .eq('invoice_number', group.invoiceNumber)
+            .maybeSingle()
 
-          // ── Build warehouse lookup (lazy — only if needed) ──────────────
-          let warehouseByName: Map<string, string> | null = null
-          async function getWarehouseId(name: string): Promise<string> {
-            if (!warehouseByName) {
-              const { data: wData } = await supabase.from('warehouse_locations').select('id, name')
-              warehouseByName = new Map(wData?.map((w: any) => [w.name.toLowerCase(), w.id as string]) ?? [])
+          let purchaseId: string
+          let isUpdate = false
+
+          if (existingPurchase) {
+            isUpdate = true
+            purchaseId = existingPurchase.id
+
+            // If previously completed, revert inventory before wiping line items
+            if (existingPurchase.status === 'completed') {
+              const { data: oldLIs } = await supabase
+                .from('purchase_line_items')
+                .select('id, product_id')
+                .eq('purchase_id', existingPurchase.id)
+
+              for (const oldLI of oldLIs ?? []) {
+                const { data: oldAllocs } = await supabase
+                  .from('purchase_allocations')
+                  .select('warehouse_location_id, quantity')
+                  .eq('purchase_line_item_id', oldLI.id)
+
+                for (const alloc of oldAllocs ?? []) {
+                  const { data: inv } = await supabase
+                    .from('inventory')
+                    .select('id, quantity')
+                    .eq('product_id', oldLI.product_id)
+                    .eq('warehouse_location_id', alloc.warehouse_location_id)
+                    .single()
+                  if (inv) {
+                    const newQty = Math.max(0, inv.quantity - alloc.quantity)
+                    await supabase.from('inventory').update({ quantity: newQty }).eq('id', inv.id)
+                  }
+                }
+                await supabase.from('purchase_allocations').delete().eq('purchase_line_item_id', oldLI.id)
+              }
+
+              // Reset to draft so we can re-complete cleanly
+              await supabase.from('purchases')
+                .update({ status: 'draft', completed_at: null })
+                .eq('id', existingPurchase.id)
             }
-            const id = warehouseByName.get(name.toLowerCase())
-            if (!id) throw new Error(`Warehouse "${name}" not found in the system`)
-            return id
+
+            // Delete all existing line items (will be replaced from CSV)
+            await supabase.from('purchase_line_items').delete().eq('purchase_id', existingPurchase.id)
+
+            // Sync header fields (supplier, date may have changed)
+            await supabase.from('purchases')
+              .update({ supplier_id: supplierId, invoice_date: group.invoiceDate })
+              .eq('id', existingPurchase.id)
+
+          } else {
+            // No existing purchase — create a fresh one
+            const { data: newPurchase, error: purchaseError } = await supabase
+              .from('purchases')
+              .insert({
+                invoice_number: group.invoiceNumber,
+                supplier_id: supplierId,
+                invoice_date: group.invoiceDate,
+                status: 'draft',
+                created_by: user!.id,
+              })
+              .select()
+              .single()
+            if (purchaseError) throw purchaseError
+            purchaseId = newPurchase.id
           }
 
-          // Create a line item for each row and capture the IDs
-          interface CreatedLI { id: string; productId: string; quantity: number; unitCost: number; taxAmount: number; warehouseName: string }
+          // ── Insert line items ─────────────────────────────────────────────
           const createdLIs: CreatedLI[] = []
+          let skippedLinesCount = 0
 
           for (const line of group.lines) {
-            // Resolve product — auto-create if not found
             let matchedProductId: string | undefined =
               (line.productIdRaw ? productByCode.get(line.productIdRaw.toLowerCase()) : undefined) ??
               (line.productIdRaw ? productBySku.get(line.productIdRaw.toLowerCase()) : undefined) ??
+              (line.productIdRaw ? productByName.get(line.productIdRaw.toLowerCase()) : undefined) ??
               (line.productIdRaw ? productData?.find((p: any) => p.id === line.productIdRaw)?.id : undefined)
 
             if (!matchedProductId) {
-              const suffix   = Date.now().toString(36).toUpperCase() +
-                               Math.random().toString(36).slice(2, 5).toUpperCase()
-              const autoSku  = line.productIdRaw ? `${line.productIdRaw}-IMP` : `MISC-${suffix}`
-              const autoName = line.productIdRaw
-                ? `${line.productIdRaw} (Auto-imported)`
-                : `Misc Item — ${group.supplierName} (${group.invoiceNumber})`
-
-              const { data: newProduct, error: productError } = await supabase
-                .from('products')
-                .insert({ name: autoName, sku: autoSku, status: 'active' })
-                .select()
-                .single()
-              if (productError) throw new Error(`Row ${line.rowIndex}: could not create product — ${productError.message}`)
-
-              matchedProductId = newProduct.id
-              if (line.productIdRaw) {
-                productByCode.set(line.productIdRaw.toLowerCase(), matchedProductId!)
-                productBySku.set(autoSku.toLowerCase(), matchedProductId!)
-              }
+              skippedLinesCount++
+              continue
             }
 
-            const taxAmount = parseFloat(
-              ((line.quantity * line.unitCost * line.taxPercent) / 100).toFixed(2)
-            )
+            const taxAmount = parseFloat(((line.quantity * line.unitCost * line.taxPercent) / 100).toFixed(2))
             const { data: insertedLI, error: lineItemError } = await supabase
               .from('purchase_line_items')
               .insert({
-                purchase_id: purchase.id,
+                purchase_id: purchaseId,
                 product_id: matchedProductId,
                 quantity: line.quantity,
                 unit_cost: line.unitCost,
@@ -428,10 +473,18 @@ export function PurchasesPage() {
               .select('id')
               .single()
             if (lineItemError) throw lineItemError
-            createdLIs.push({ id: insertedLI.id, productId: matchedProductId!, quantity: line.quantity, unitCost: line.unitCost, taxAmount, warehouseName: line.warehouseName })
+            createdLIs.push({ id: insertedLI.id, productId: matchedProductId!, quantity: line.quantity, unitCost: line.unitCost, warehouseName: line.warehouseName })
           }
 
-          // ── Auto-complete if every line has a warehouse name ─────────────
+          if (createdLIs.length === 0) {
+            throw new Error(`All ${group.lines.length} line items skipped — no matching products found`)
+          }
+
+          if (skippedLinesCount > 0) {
+            errors.push(`Invoice ${group.invoiceNumber}: ${skippedLinesCount} line item(s) skipped (product not found)`)
+          }
+
+          // ── Auto-complete + update inventory if warehouse provided ────────
           const allHaveWarehouse = createdLIs.every(li => li.warehouseName)
           if (allHaveWarehouse) {
             for (const li of createdLIs) {
@@ -442,13 +495,10 @@ export function PurchasesPage() {
                 warehouse_location_id: warehouseId,
                 quantity: li.quantity,
               })
-
-              // Landed unit cost = unit cost (no additional costs in CSV import)
               await supabase.from('purchase_line_items')
                 .update({ landed_unit_cost: li.unitCost })
                 .eq('id', li.id)
 
-              // Upsert inventory
               const { data: existingInv } = await supabase
                 .from('inventory')
                 .select('id, quantity')
@@ -462,19 +512,22 @@ export function PurchasesPage() {
                 await supabase.from('inventory').insert({ product_id: li.productId, warehouse_location_id: warehouseId, quantity: li.quantity })
               }
             }
-            await supabase.from('purchases').update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', purchase.id)
+            await supabase.from('purchases')
+              .update({ status: 'completed', completed_at: new Date().toISOString() })
+              .eq('id', purchaseId)
           }
 
-          createdPurchases.push(purchase)
+          processedPurchases.push({ id: purchaseId, invoice_number: group.invoiceNumber })
           successCount++
+          if (isUpdate) updatedCount++
 
           if (user) {
             await logDashboardActivity({
               entityType: 'purchase',
-              action: 'create',
+              action: isUpdate ? 'update' : 'create',
               userId: user.id,
-              entityId: purchase.id,
-              description: `Bulk imported purchase invoice ${group.invoiceNumber}${allHaveWarehouse ? ' (completed)' : ' (draft)'}`,
+              entityId: purchaseId,
+              description: `${isUpdate ? 'Updated' : 'Imported'} purchase invoice ${group.invoiceNumber}${allHaveWarehouse ? ' — inventory updated' : ' (draft)'}`,
               metadata: { supplier_id: supplierId, line_count: group.lines.length },
             })
           }
@@ -488,12 +541,13 @@ export function PurchasesPage() {
         throw new Error(`Failed to import any purchases:\n${errors.slice(0, 10).join('\n')}`)
       }
 
-      const completedCount = createdPurchases.filter((p: any) => {
+      const completedCount = processedPurchases.filter(p => {
         const group = [...invoiceMap.values()].find(g => g.invoiceNumber === p.invoice_number)
         return group?.lines.every(l => l.warehouseName)
       }).length
+      const newCount = successCount - updatedCount
 
-      return { successCount, errorCount, completedCount, errors: [...skippedRows, ...errors], createdPurchases }
+      return { successCount, newCount, updatedCount, completedCount, errorCount, errors: [...skippedRows, ...errors] }
     },
     onSuccess: async (result) => {
       queryClient.invalidateQueries({ queryKey: ['purchases'] })
@@ -503,14 +557,17 @@ export function PurchasesPage() {
         fileInputRef.current.value = ''
       }
 
-      let message = `Imported ${result.successCount} purchase${result.successCount !== 1 ? 's' : ''}`
-      if (result.completedCount > 0) message += ` (${result.completedCount} completed → inventory updated)`
-      else message += ` — add warehouse_name to CSV to auto-complete`
+      const parts: string[] = []
+      if (result.newCount > 0) parts.push(`${result.newCount} new`)
+      if (result.updatedCount > 0) parts.push(`${result.updatedCount} updated`)
+      let message = `Processed ${result.successCount} purchase${result.successCount !== 1 ? 's' : ''} (${parts.join(', ')})`
+      if (result.completedCount > 0) message += ` — ${result.completedCount} completed, inventory updated`
+      else message += ` — add warehouse_name to CSV to update inventory`
       if (result.errorCount > 0) message += `, ${result.errorCount} failed`
       toast.success(message)
 
       if (result.errors.length > 0) {
-        toast.error(`Some rows failed:\n${result.errors.slice(0, 3).join('\n')}${result.errors.length > 3 ? `\n... and ${result.errors.length - 3} more` : ''}`)
+        toast.error(`Some rows had issues:\n${result.errors.slice(0, 3).join('\n')}${result.errors.length > 3 ? `\n... and ${result.errors.length - 3} more` : ''}`)
       }
     },
     onError: (error: any) => {
