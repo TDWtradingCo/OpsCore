@@ -284,6 +284,86 @@ export function ProductsPage() {
     onError: (error) => toast.error(error.message),
   })
 
+  const bulkDeleteProducts = useMutation({
+    mutationFn: async (productIds: string[]) => {
+      let deleted = 0
+
+      for (const productId of productIds) {
+        try {
+          // Get product to check if it's a Misc Item
+          const { data: product } = await supabase
+            .from('products')
+            .select('name')
+            .eq('id', productId)
+            .single()
+
+          const isMiscItem = product?.name?.includes('Misc Item')
+
+          // Check if product has any inventory or purchase line items
+          const { data: inventoryItems } = await supabase
+            .from('inventory')
+            .select('id')
+            .eq('product_id', productId)
+
+          const { data: purchaseItems } = await supabase
+            .from('purchase_line_items')
+            .select('id, purchase_id')
+            .eq('product_id', productId)
+
+          // For Misc Item products, cascade delete all related records
+          if (isMiscItem && ((inventoryItems?.length ?? 0) > 0 || (purchaseItems?.length ?? 0) > 0)) {
+            const purchaseItemIds = purchaseItems?.map(p => p.id) ?? []
+            if (purchaseItemIds.length > 0) {
+              await supabase.from('purchase_allocations').delete().in('purchase_line_item_id', purchaseItemIds)
+            }
+
+            if (purchaseItems && purchaseItems.length > 0) {
+              const purchaseIds = [...new Set(purchaseItems.map(p => p.purchase_id))]
+              await supabase.from('purchase_line_items').delete().eq('product_id', productId)
+
+              for (const pId of purchaseIds) {
+                const { data: remaining } = await supabase
+                  .from('purchase_line_items')
+                  .select('id')
+                  .eq('purchase_id', pId)
+                if (!remaining || remaining.length === 0) {
+                  await supabase.from('purchases').delete().eq('id', pId)
+                }
+              }
+            }
+
+            if (inventoryItems && inventoryItems.length > 0) {
+              await supabase.from('inventory').delete().eq('product_id', productId)
+            }
+          } else if ((inventoryItems?.length ?? 0) > 0 || (purchaseItems?.length ?? 0) > 0) {
+            continue
+          }
+
+          const { error } = await supabase.from('products').delete().eq('id', productId)
+          if (!error) deleted++
+        } catch (err) {
+          continue
+        }
+      }
+
+      return deleted
+    },
+    onSuccess: async (deleted) => {
+      queryClient.invalidateQueries({ queryKey: ['products'], type: 'all' })
+      setSelectedProducts(new Set())
+      if (user) {
+        await logDashboardActivity({
+          entityType: 'product',
+          action: 'delete',
+          userId: user.id,
+          description: `Bulk deleted ${deleted} products from database`,
+        })
+      }
+      toast.success(`Successfully deleted ${deleted} product${deleted !== 1 ? 's' : ''}`)
+    },
+    onError: (error) => toast.error(error.message),
+  })
+
   async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -455,15 +535,26 @@ export function ProductsPage() {
                 variant="outline"
                 className="text-destructive hover:text-destructive gap-1"
                 onClick={() => {
-                  const productId = Array.from(selectedProducts)[0]
-                  if (productId && confirm('Permanently delete this product from database? This cannot be undone.')) {
-                    deleteProduct.mutate(productId)
+                  const selectedIds = Array.from(selectedProducts)
+                  const count = selectedIds.length
+                  if (count === 0) return
+
+                  const message = count === 1
+                    ? 'Permanently delete this product from database? This cannot be undone.'
+                    : `Permanently delete ${count} products from database? This cannot be undone.`
+
+                  if (confirm(message)) {
+                    if (count === 1) {
+                      deleteProduct.mutate(selectedIds[0])
+                    } else {
+                      bulkDeleteProducts.mutate(selectedIds)
+                    }
                   }
                 }}
-                disabled={deleteProduct.isPending}
+                disabled={deleteProduct.isPending || bulkDeleteProducts.isPending}
               >
                 <Trash2 className="h-3.5 w-3.5" />
-                Delete
+                Delete {selectedProducts.size > 1 && `(${selectedProducts.size})`}
               </Button>
               <Button
                 size="sm"
