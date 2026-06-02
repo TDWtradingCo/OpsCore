@@ -305,18 +305,19 @@ export function PurchasesPage() {
         const unitCostRaw  = (row.unit_cost ?? '').replace(/[$,\s]/g, '')
         const unitCost     = parseFloat(unitCostRaw)
 
-        // Find any column with "tax" in the name (but not tax_type or tax_recoverability)
-        let taxPercentRaw = '0'
-        for (const [key, value] of Object.entries(row)) {
-          if (key.toLowerCase().includes('tax') &&
-              !key.toLowerCase().includes('type') &&
-              !key.toLowerCase().includes('recoverability') &&
-              value) {
-            taxPercentRaw = String(value).replace(/[$,\s%]/g, '')
-            break
-          }
-        }
-        const taxPercent    = parseFloat(taxPercentRaw || '0') || 0
+        // Prefer an explicit "Tax Percentage" column.
+        // Note: `parseCSV()` normalizes headers like "Tax Percentage (%)" -> `tax_percentage`.
+        // Some CSVs also include a "Tax" (amount) column; we must NOT treat that as a percent.
+        const taxPercentRawCandidate =
+          row['tax_percentage'] ??
+          row['tax_percent'] ??
+          // fallback for any non-normalized/legacy inputs
+          row['taxpercentage'] ??
+          row['taxpercent'] ??
+          ''
+
+        const taxPercentRaw = String(taxPercentRawCandidate).replace(/[$,\s%]/g, '')
+        const taxPercent = parseFloat(taxPercentRaw || '0') || 0
         const taxRecoverability = (row.tax_type ?? row.tax_recoverability)?.trim() || 'recoverable'
         const warehouseName = row.warehouse_name?.trim() || ''
 
