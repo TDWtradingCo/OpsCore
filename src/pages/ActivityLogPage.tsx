@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { Card, CardContent } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { SearchableSelect } from '@/components/ui/searchable-select'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -136,18 +137,21 @@ export function ActivityLogPage() {
             <SelectItem value="complete">Complete</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={userFilter} onValueChange={setUserFilter}>
-          <SelectTrigger className="w-full sm:w-[160px]">
-            <SelectValue placeholder="User" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Users</SelectItem>
-            <SelectItem value="me">My Activity</SelectItem>
-            {users?.filter(u => u.id !== user?.id).map((u) => (
-              <SelectItem key={u.id} value={u.id}>{u.full_name ?? u.email}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="w-full sm:w-[160px]">
+          <SearchableSelect
+            value={userFilter}
+            onValueChange={setUserFilter}
+            placeholder="Search users..."
+            options={[
+              { value: 'all', label: 'All Users' },
+              { value: 'me', label: 'My Activity' },
+              ...(users?.filter(u => u.id !== user?.id).map(u => ({
+                value: u.id,
+                label: u.full_name ?? u.email
+              })) ?? [])
+            ]}
+          />
+        </div>
         <Select value={sortDirection} onValueChange={(v) => setSortDirection(v as 'desc' | 'asc')}>
           <SelectTrigger className="w-full sm:w-[150px]">
             <SelectValue />

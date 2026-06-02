@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { SearchableSelect } from '@/components/ui/searchable-select'
 import { ArrowRightLeft, TrendingUp, Search, Download } from 'lucide-react'
 import { exportToCSV } from '@/lib/csv'
 import { toast } from 'sonner'
@@ -252,17 +253,17 @@ export function InventoryPage() {
             className="pl-9"
           />
         </div>
-        <Select value={warehouseFilter} onValueChange={setWarehouseFilter}>
-          <SelectTrigger className="w-full sm:w-[180px]">
-            <SelectValue placeholder="Warehouse" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Warehouses</SelectItem>
-            {warehouseLocations?.map((wh) => (
-              <SelectItem key={wh.id} value={wh.id}>{wh.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="w-full sm:w-[200px]">
+          <SearchableSelect
+            value={warehouseFilter}
+            onValueChange={setWarehouseFilter}
+            placeholder="Search warehouses..."
+            options={[
+              { value: 'all', label: 'All Warehouses' },
+              ...(warehouseLocations?.map(wh => ({ value: wh.id, label: wh.name })) ?? [])
+            ]}
+          />
+        </div>
         <span className="text-sm text-muted-foreground">{inventory?.length ?? 0} records</span>
       </div>
 
@@ -651,30 +652,22 @@ function AdjustmentForm({ onSuccess }: { onSuccess: () => void }) {
     <div className="space-y-4">
       <div className="space-y-2">
         <Label>Product</Label>
-        <Select value={productId} onValueChange={setProductId}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select product" />
-          </SelectTrigger>
-          <SelectContent>
-            {products?.map((p) => (
-              <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku})</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <SearchableSelect
+          value={productId}
+          onValueChange={setProductId}
+          placeholder="Search products..."
+          options={products?.map(p => ({ value: p.id, label: `${p.name} (${p.sku})` })) ?? []}
+        />
       </div>
 
       <div className="space-y-2">
         <Label>Location</Label>
-        <Select value={locationId} onValueChange={setLocationId}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select location" />
-          </SelectTrigger>
-          <SelectContent>
-            {locations?.map((l) => (
-              <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <SearchableSelect
+          value={locationId}
+          onValueChange={setLocationId}
+          placeholder="Search locations..."
+          options={locations?.map(l => ({ value: l.id, label: l.name })) ?? []}
+        />
       </div>
 
       <div className="space-y-2">
@@ -883,44 +876,32 @@ function TransferForm({ onSuccess }: { onSuccess: () => void }) {
     <div className="space-y-4">
       <div className="space-y-2">
         <Label>Product</Label>
-        <Select value={productId} onValueChange={setProductId}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select product" />
-          </SelectTrigger>
-          <SelectContent>
-            {products?.map((p) => (
-              <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku})</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <SearchableSelect
+          value={productId}
+          onValueChange={setProductId}
+          placeholder="Search products..."
+          options={products?.map(p => ({ value: p.id, label: `${p.name} (${p.sku})` })) ?? []}
+        />
       </div>
 
       <div className="space-y-2">
         <Label>From Location</Label>
-        <Select value={sourceId} onValueChange={setSourceId}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select source" />
-          </SelectTrigger>
-          <SelectContent>
-            {locations?.map((l) => (
-              <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <SearchableSelect
+          value={sourceId}
+          onValueChange={setSourceId}
+          placeholder="Search locations..."
+          options={locations?.map(l => ({ value: l.id, label: l.name })) ?? []}
+        />
       </div>
 
       <div className="space-y-2">
         <Label>To Location</Label>
-        <Select value={destId} onValueChange={setDestId}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select destination" />
-          </SelectTrigger>
-          <SelectContent>
-            {locations?.filter((l) => l.id !== sourceId).map((l) => (
-              <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <SearchableSelect
+          value={destId}
+          onValueChange={setDestId}
+          placeholder="Search locations..."
+          options={locations?.filter((l) => l.id !== sourceId).map(l => ({ value: l.id, label: l.name })) ?? []}
+        />
         {sourceId && destId && sourceId === destId && (
           <p className="text-sm text-destructive">Source and destination must be different</p>
         )}

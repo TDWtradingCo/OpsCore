@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { SearchableSelect } from '@/components/ui/searchable-select'
 import { Textarea } from '@/components/ui/textarea'
 import { useAuth } from '@/contexts/AuthContext'
 import { exportToCSV, parseCSV } from '@/lib/csv'
@@ -819,16 +820,12 @@ export function PurchasesPage() {
               </div>
               <div className="space-y-2">
                 <Label>Supplier *</Label>
-                <Select value={supplierId} onValueChange={setSupplierId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select supplier" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {suppliers?.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableSelect
+                  value={supplierId}
+                  onValueChange={setSupplierId}
+                  placeholder="Search suppliers..."
+                  options={suppliers?.map(s => ({ value: s.id, label: s.name })) ?? []}
+                />
               </div>
               <div className="space-y-2">
                 <Label>Invoice Date *</Label>
@@ -868,16 +865,12 @@ export function PurchasesPage() {
               </div>
               <div className="space-y-2">
                 <Label>Supplier *</Label>
-                <Select value={editSupplierId} onValueChange={setEditSupplierId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select supplier" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {suppliers?.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableSelect
+                  value={editSupplierId}
+                  onValueChange={setEditSupplierId}
+                  placeholder="Search suppliers..."
+                  options={suppliers?.map(s => ({ value: s.id, label: s.name })) ?? []}
+                />
               </div>
               <div className="space-y-2">
                 <Label>Invoice Date *</Label>
@@ -1064,16 +1057,12 @@ export function PurchasesPage() {
             </p>
             <div className="space-y-2">
               <Label>Warehouse *</Label>
-              <Select value={completeDraftsWarehouse} onValueChange={setCompleteDraftsWarehouse}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select warehouse" />
-                </SelectTrigger>
-                <SelectContent>
-                  {warehouseLocations?.map((w) => (
-                    <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={completeDraftsWarehouse}
+                onValueChange={setCompleteDraftsWarehouse}
+                placeholder="Search warehouses..."
+                options={warehouseLocations?.map(w => ({ value: w.id, label: w.name })) ?? []}
+              />
             </div>
             <Button
               className="w-full"
