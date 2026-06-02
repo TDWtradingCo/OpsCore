@@ -304,7 +304,18 @@ export function PurchasesPage() {
         const quantity     = parseInt(row.quantity ?? '', 10)
         const unitCostRaw  = (row.unit_cost ?? '').replace(/[$,\s]/g, '')
         const unitCost     = parseFloat(unitCostRaw)
-        const taxPercentRaw = (row.tax_percentage ?? row.tax_percent ?? '0').replace(/[$,\s]/g, '')
+
+        // Find any column with "tax" in the name (but not tax_type or tax_recoverability)
+        let taxPercentRaw = '0'
+        for (const [key, value] of Object.entries(row)) {
+          if (key.toLowerCase().includes('tax') &&
+              !key.toLowerCase().includes('type') &&
+              !key.toLowerCase().includes('recoverability') &&
+              value) {
+            taxPercentRaw = String(value).replace(/[$,\s%]/g, '')
+            break
+          }
+        }
         const taxPercent    = parseFloat(taxPercentRaw || '0') || 0
         const taxRecoverability = (row.tax_type ?? row.tax_recoverability)?.trim() || 'recoverable'
         const warehouseName = row.warehouse_name?.trim() || ''
