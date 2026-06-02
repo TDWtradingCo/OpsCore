@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { SearchableSelect } from '@/components/ui/searchable-select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { formatCurrency } from '@/lib/utils'
@@ -403,28 +404,21 @@ function AddPricingForm({
     <div className="space-y-4">
       <div className="space-y-2">
         <Label>Product</Label>
-        <Select value={productId} onValueChange={setProductId}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select product" />
-          </SelectTrigger>
-          <SelectContent>
-            {products.map((p) => (
-              <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku})</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <SearchableSelect
+          value={productId}
+          onValueChange={setProductId}
+          placeholder="Search products..."
+          options={products.map(p => ({ value: p.id, label: `${p.name} (${p.sku})` }))}
+        />
       </div>
       <div className="space-y-2">
         <Label>Channel</Label>
-        <Select value={channelId} onValueChange={setChannelId}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select channel" />
-          </SelectTrigger>
-          <SelectContent>
-            {channels.map((ch) => (
-              <SelectItem key={ch.id} value={ch.id}>{ch.name}</SelectItem>
-            ))}
-          </SelectContent>
+        <SearchableSelect
+          value={channelId}
+          onValueChange={setChannelId}
+          placeholder="Search channels..."
+          options={channels.map(ch => ({ value: ch.id, label: ch.name }))}
+        />
         </Select>
       </div>
       <div className="space-y-2">
