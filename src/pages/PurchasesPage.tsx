@@ -497,41 +497,39 @@ export function PurchasesPage() {
             errors.push(`Invoice ${group.invoiceNumber}: ${skippedLinesCount} line item(s) skipped (product not found)`)
           }
 
-          // ── Auto-complete all purchases + update inventory if warehouse provided ────────
-          const allHaveWarehouse = createdLIs.every(li => li.warehouseName)
+          // ── Auto-complete all purchases + allocate to warehouse (default: Local Storage) ────────
+          const localStorageWarehouse = await getWarehouseId('Local Storage')
           let inventoryUpdated = false
 
-          if (allHaveWarehouse) {
-            // If warehouse is provided, allocate and update inventory
-            for (const li of createdLIs) {
-              const warehouseId = await getWarehouseId(li.warehouseName)
+          // Allocate all line items to warehouse (provided or default to Local Storage)
+          for (const li of createdLIs) {
+            const warehouseId = li.warehouseName ? await getWarehouseId(li.warehouseName) : localStorageWarehouse
 
-              await supabase.from('purchase_allocations').insert({
-                purchase_line_item_id: li.id,
-                warehouse_location_id: warehouseId,
-                quantity: li.quantity,
-              })
-              await supabase.from('purchase_line_items')
-                .update({ landed_unit_cost: li.unitCost })
-                .eq('id', li.id)
+            await supabase.from('purchase_allocations').insert({
+              purchase_line_item_id: li.id,
+              warehouse_location_id: warehouseId,
+              quantity: li.quantity,
+            })
+            await supabase.from('purchase_line_items')
+              .update({ landed_unit_cost: li.unitCost })
+              .eq('id', li.id)
 
-              const { data: existingInv } = await supabase
-                .from('inventory')
-                .select('id, quantity')
-                .eq('product_id', li.productId)
-                .eq('warehouse_location_id', warehouseId)
-                .single()
+            const { data: existingInv } = await supabase
+              .from('inventory')
+              .select('id, quantity')
+              .eq('product_id', li.productId)
+              .eq('warehouse_location_id', warehouseId)
+              .single()
 
-              if (existingInv) {
-                await supabase.from('inventory').update({ quantity: existingInv.quantity + li.quantity }).eq('id', existingInv.id)
-              } else {
-                await supabase.from('inventory').insert({ product_id: li.productId, warehouse_location_id: warehouseId, quantity: li.quantity })
-              }
+            if (existingInv) {
+              await supabase.from('inventory').update({ quantity: existingInv.quantity + li.quantity }).eq('id', existingInv.id)
+            } else {
+              await supabase.from('inventory').insert({ product_id: li.productId, warehouse_location_id: warehouseId, quantity: li.quantity })
             }
             inventoryUpdated = true
           }
 
-          // Auto-complete all purchases (with or without warehouse)
+          // Auto-complete all purchases
           await supabase.from('purchases')
             .update({ status: 'completed', completed_at: new Date().toISOString() })
             .eq('id', purchaseId)
