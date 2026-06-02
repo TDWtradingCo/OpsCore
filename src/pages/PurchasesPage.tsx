@@ -225,22 +225,34 @@ export function PurchasesPage() {
       const rows = parseCSV(csvText)
       if (rows.length === 0) throw new Error('No valid rows in CSV')
 
-      // ── Lookup maps ──────────────────────────────────────────────────────
-      const { data: supplierData } = await supabase.from('suppliers').select('id, name')
+      // ── Fetch all lookup data in parallel ────────────────────────────────
+      const [{ data: supplierData }, { data: productData }, { data: warehouseData }] = await Promise.all([
+        supabase.from('suppliers').select('id, name'),
+        supabase.from('products').select('id, sku, product_code, name'),
+        supabase.from('warehouse_locations').select('id, name'),
+      ])
+
       const supplierByName = new Map<string, string>(
         supplierData?.map((s: any) => [s.name.toLowerCase(), s.id as string]) ?? []
-      )
-
-      const { data: productData } = await supabase.from('products').select('id, sku, product_code, name')
-      const productBySku = new Map<string, string>(
-        productData?.flatMap((p: any) => p.sku ? [[p.sku.toLowerCase() as string, p.id as string]] : []) ?? []
       )
       const productByCode = new Map<string, string>(
         productData?.flatMap((p: any) => p.product_code ? [[p.product_code.toLowerCase() as string, p.id as string]] : []) ?? []
       )
+      const productBySku = new Map<string, string>(
+        productData?.flatMap((p: any) => p.sku ? [[p.sku.toLowerCase() as string, p.id as string]] : []) ?? []
+      )
       const productByName = new Map<string, string>(
         productData?.flatMap((p: any) => p.name ? [[p.name.toLowerCase() as string, p.id as string]] : []) ?? []
       )
+      const warehouseByName = new Map<string, string>(
+        warehouseData?.map((w: any) => [w.name.toLowerCase(), w.id as string]) ?? []
+      )
+
+      function getWarehouseId(name: string): string {
+        const wid = warehouseByName.get(name.toLowerCase())
+        if (!wid) throw new Error(`Warehouse "${name}" not found in the system`)
+        return wid
+      }
 
       // ── Helpers ──────────────────────────────────────────────────────────
       function normaliseDateToISO(raw: string): string {
@@ -296,14 +308,13 @@ export function PurchasesPage() {
         const supplierName  = row.supplier_name?.trim()
         const invoiceDate   = normaliseDateToISO(row.invoice_date ?? '')
 
-        // Skip rows missing the three invoice-level required fields
         if (!invoiceNumber) { skippedRows.push(`Row ${i + 2}: missing invoice number`); continue }
         if (!supplierName)  { skippedRows.push(`Row ${i + 2}: missing supplier name`); continue }
         if (!invoiceDate)   { skippedRows.push(`Row ${i + 2}: missing or unrecognised date`); continue }
 
-        const quantity     = parseInt(row.quantity ?? '', 10)
-        const unitCostRaw  = (row.unit_cost ?? '').replace(/[$,\s]/g, '')
-        const unitCost     = parseFloat(unitCostRaw)
+        const quantity    = parseInt(row.quantity ?? '', 10)
+        const unitCostRaw = (row.unit_cost ?? '').replace(/[$,\s]/g, '')
+        const unitCost    = parseFloat(unitCostRaw)
 
         // Prefer an explicit "Tax Percentage" column.
         // Note: `parseCSV()` normalizes headers like "Tax Percentage (%)" -> `tax_percentage`.
@@ -311,7 +322,6 @@ export function PurchasesPage() {
         const taxPercentRawCandidate =
           row['tax_percentage'] ??
           row['tax_percent'] ??
-          // fallback for any non-normalized/legacy inputs
           row['taxpercentage'] ??
           row['taxpercent'] ??
           ''
@@ -321,7 +331,6 @@ export function PurchasesPage() {
         const taxRecoverability = (row.tax_type ?? row.tax_recoverability)?.trim() || 'recoverable'
         const warehouseName = row.warehouse_name?.trim() || ''
 
-        // Skip rows with invalid quantity or cost
         if (!Number.isFinite(quantity) || quantity <= 0) {
           skippedRows.push(`Row ${i + 2}: invalid or missing quantity — skipped`)
           continue
@@ -332,20 +341,12 @@ export function PurchasesPage() {
         }
 
         const productIdRaw = row.product_id?.trim() || null
-
-        // Group by invoice_number + supplier (one purchase per invoice)
         const groupKey = `${invoiceNumber}|||${supplierName.toLowerCase()}`
         if (!invoiceMap.has(groupKey)) {
           invoiceMap.set(groupKey, { invoiceNumber, supplierName, invoiceDate, lines: [] })
         }
         invoiceMap.get(groupKey)!.lines.push({
-          productIdRaw,
-          quantity,
-          unitCost,
-          taxPercent,
-          taxRecoverability,
-          rowIndex: i + 2,
-          warehouseName,
+          productIdRaw, quantity, unitCost, taxPercent, taxRecoverability, rowIndex: i + 2, warehouseName,
         })
       }
 
@@ -354,217 +355,280 @@ export function PurchasesPage() {
         throw new Error(`No valid rows found.${detail}`)
       }
 
-      // ── Warehouse lookup (lazy, shared across all invoice groups) ────────
-      let warehouseByName: Map<string, string> | null = null
-      async function getWarehouseId(name: string): Promise<string> {
-        if (!warehouseByName) {
-          const { data: wData } = await supabase.from('warehouse_locations').select('id, name')
-          warehouseByName = new Map(wData?.map((w: any) => [w.name.toLowerCase(), w.id as string]) ?? [])
+      // ── BATCH: Check all invoices in one query ────────────────────────────
+      const allInvoiceNumbers = [...invoiceMap.values()].map(g => g.invoiceNumber)
+      const { data: existingPurchases } = await supabase
+        .from('purchases')
+        .select('id, status, invoice_number')
+        .in('invoice_number', allInvoiceNumbers)
+
+      const existingByInvoice = new Map(
+        existingPurchases?.map((p: any) => [p.invoice_number as string, p]) ?? []
+      )
+      const completedIds = existingPurchases?.filter((p: any) => p.status === 'completed').map((p: any) => p.id as string) ?? []
+      const allExistingIds = existingPurchases?.map((p: any) => p.id as string) ?? []
+
+      // ── BATCH: Revert inventory for completed purchases being re-imported ──
+      if (completedIds.length > 0) {
+        const { data: oldLIs } = await supabase
+          .from('purchase_line_items')
+          .select('id, product_id')
+          .in('purchase_id', completedIds)
+
+        const oldLIIds = oldLIs?.map((li: any) => li.id as string) ?? []
+        const liProductMap = new Map(oldLIs?.map((li: any) => [li.id as string, li.product_id as string]) ?? [])
+
+        if (oldLIIds.length > 0) {
+          const { data: oldAllocs } = await supabase
+            .from('purchase_allocations')
+            .select('purchase_line_item_id, warehouse_location_id, quantity')
+            .in('purchase_line_item_id', oldLIIds)
+
+          // Aggregate reductions by product+warehouse
+          const reductions = new Map<string, number>()
+          for (const alloc of oldAllocs ?? []) {
+            const productId = liProductMap.get(alloc.purchase_line_item_id)
+            if (productId) {
+              const key = `${productId}:::${alloc.warehouse_location_id}`
+              reductions.set(key, (reductions.get(key) ?? 0) + alloc.quantity)
+            }
+          }
+
+          if (reductions.size > 0) {
+            const affectedProductIds = [...new Set([...reductions.keys()].map(k => k.split(':::')[0]))]
+            const { data: affectedInv } = await supabase
+              .from('inventory')
+              .select('id, quantity, product_id, warehouse_location_id')
+              .in('product_id', affectedProductIds)
+
+            await Promise.all(
+              (affectedInv ?? []).map((inv: any) => {
+                const reduction = reductions.get(`${inv.product_id}:::${inv.warehouse_location_id}`)
+                if (!reduction) return Promise.resolve()
+                return supabase.from('inventory')
+                  .update({ quantity: Math.max(0, inv.quantity - reduction) })
+                  .eq('id', inv.id)
+              })
+            )
+          }
+
+          await supabase.from('purchase_allocations').delete().in('purchase_line_item_id', oldLIIds)
         }
-        const wid = warehouseByName.get(name.toLowerCase())
-        if (!wid) throw new Error(`Warehouse "${name}" not found in the system`)
-        return wid
+
+        await Promise.all([
+          supabase.from('purchase_line_items').delete().in('purchase_id', completedIds),
+          supabase.from('purchases').update({ status: 'draft', completed_at: null }).in('id', completedIds),
+        ])
       }
 
-      // ── Process each invoice group (upsert: update if exists, create if new) ──
-      interface CreatedLI { id: string; productId: string; quantity: number; unitCost: number; warehouseName: string }
+      // Delete line items for non-completed existing purchases (drafts being re-imported)
+      const draftExistingIds = allExistingIds.filter(id => !completedIds.includes(id))
+      if (draftExistingIds.length > 0) {
+        await supabase.from('purchase_line_items').delete().in('purchase_id', draftExistingIds)
+      }
 
-      const processedPurchases: any[] = []
-      let successCount = 0
-      let updatedCount = 0
-      let errorCount   = 0
+      // ── BATCH: Create new purchases + update existing headers in parallel ──
       const errors: string[] = []
+      let errorCount = 0
+
+      const toCreate: Array<{ invoiceNumber: string; supplierId: string; invoiceDate: string }> = []
+      const toUpdate: Array<{ id: string; invoiceNumber: string; supplierId: string; invoiceDate: string }> = []
 
       for (const [, group] of invoiceMap) {
-        try {
-          const supplierId = supplierByName.get(group.supplierName.toLowerCase())
-          if (!supplierId) {
-            throw new Error(`Supplier "${group.supplierName}" not found in the system`)
-          }
-
-          // ── Check if this invoice already exists ─────────────────────────
-          const { data: existingPurchase } = await supabase
-            .from('purchases')
-            .select('id, status')
-            .eq('invoice_number', group.invoiceNumber)
-            .maybeSingle()
-
-          let purchaseId: string
-          let isUpdate = false
-
-          if (existingPurchase) {
-            isUpdate = true
-            purchaseId = existingPurchase.id
-
-            // If previously completed, revert inventory before wiping line items
-            if (existingPurchase.status === 'completed') {
-              const { data: oldLIs } = await supabase
-                .from('purchase_line_items')
-                .select('id, product_id')
-                .eq('purchase_id', existingPurchase.id)
-
-              for (const oldLI of oldLIs ?? []) {
-                const { data: oldAllocs } = await supabase
-                  .from('purchase_allocations')
-                  .select('warehouse_location_id, quantity')
-                  .eq('purchase_line_item_id', oldLI.id)
-
-                for (const alloc of oldAllocs ?? []) {
-                  const { data: inv } = await supabase
-                    .from('inventory')
-                    .select('id, quantity')
-                    .eq('product_id', oldLI.product_id)
-                    .eq('warehouse_location_id', alloc.warehouse_location_id)
-                    .single()
-                  if (inv) {
-                    const newQty = Math.max(0, inv.quantity - alloc.quantity)
-                    await supabase.from('inventory').update({ quantity: newQty }).eq('id', inv.id)
-                  }
-                }
-                await supabase.from('purchase_allocations').delete().eq('purchase_line_item_id', oldLI.id)
-              }
-
-              // Reset to draft so we can re-complete cleanly
-              await supabase.from('purchases')
-                .update({ status: 'draft', completed_at: null })
-                .eq('id', existingPurchase.id)
-            }
-
-            // Delete all existing line items (will be replaced from CSV)
-            await supabase.from('purchase_line_items').delete().eq('purchase_id', existingPurchase.id)
-
-            // Sync header fields (supplier, date may have changed)
-            await supabase.from('purchases')
-              .update({ supplier_id: supplierId, invoice_date: group.invoiceDate })
-              .eq('id', existingPurchase.id)
-
-          } else {
-            // No existing purchase — create a fresh one
-            const { data: newPurchase, error: purchaseError } = await supabase
-              .from('purchases')
-              .insert({
-                invoice_number: group.invoiceNumber,
-                supplier_id: supplierId,
-                invoice_date: group.invoiceDate,
-                status: 'draft',
-                created_by: user!.id,
-              })
-              .select()
-              .single()
-            if (purchaseError) throw purchaseError
-            purchaseId = newPurchase.id
-          }
-
-          // ── Insert line items ─────────────────────────────────────────────
-          const createdLIs: CreatedLI[] = []
-          let skippedLinesCount = 0
-
-          for (const line of group.lines) {
-            let matchedProductId: string | undefined =
-              (line.productIdRaw ? productByCode.get(line.productIdRaw.toLowerCase()) : undefined) ??
-              (line.productIdRaw ? productBySku.get(line.productIdRaw.toLowerCase()) : undefined) ??
-              (line.productIdRaw ? productByName.get(line.productIdRaw.toLowerCase()) : undefined) ??
-              (line.productIdRaw ? productData?.find((p: any) => p.id === line.productIdRaw)?.id : undefined)
-
-            if (!matchedProductId) {
-              skippedLinesCount++
-              continue
-            }
-
-            const taxAmount = parseFloat(((line.quantity * line.unitCost * line.taxPercent) / 100).toFixed(2))
-            const { data: insertedLI, error: lineItemError } = await supabase
-              .from('purchase_line_items')
-              .insert({
-                purchase_id: purchaseId,
-                product_id: matchedProductId,
-                quantity: line.quantity,
-                unit_cost: line.unitCost,
-                tax_percent: line.taxPercent,
-                tax_amount: taxAmount,
-                tax_recoverability: line.taxRecoverability,
-              })
-              .select('id')
-              .single()
-            if (lineItemError) throw lineItemError
-            createdLIs.push({ id: insertedLI.id, productId: matchedProductId!, quantity: line.quantity, unitCost: line.unitCost, warehouseName: line.warehouseName })
-          }
-
-          if (createdLIs.length === 0) {
-            throw new Error(`All ${group.lines.length} line items skipped — no matching products found`)
-          }
-
-          if (skippedLinesCount > 0) {
-            errors.push(`Invoice ${group.invoiceNumber}: ${skippedLinesCount} line item(s) skipped (product not found)`)
-          }
-
-          // ── Auto-complete all purchases + allocate to warehouse (default: Local Storage) ────────
-          const localStorageWarehouse = await getWarehouseId('Local Storage')
-          let inventoryUpdated = false
-
-          // Allocate all line items to warehouse (provided or default to Local Storage)
-          for (const li of createdLIs) {
-            const warehouseId = li.warehouseName ? await getWarehouseId(li.warehouseName) : localStorageWarehouse
-
-            await supabase.from('purchase_allocations').insert({
-              purchase_line_item_id: li.id,
-              warehouse_location_id: warehouseId,
-              quantity: li.quantity,
-            })
-            await supabase.from('purchase_line_items')
-              .update({ landed_unit_cost: li.unitCost })
-              .eq('id', li.id)
-
-            const { data: existingInv } = await supabase
-              .from('inventory')
-              .select('id, quantity')
-              .eq('product_id', li.productId)
-              .eq('warehouse_location_id', warehouseId)
-              .single()
-
-            if (existingInv) {
-              await supabase.from('inventory').update({ quantity: existingInv.quantity + li.quantity }).eq('id', existingInv.id)
-            } else {
-              await supabase.from('inventory').insert({ product_id: li.productId, warehouse_location_id: warehouseId, quantity: li.quantity })
-            }
-            inventoryUpdated = true
-          }
-
-          // Auto-complete all purchases
-          await supabase.from('purchases')
-            .update({ status: 'completed', completed_at: new Date().toISOString() })
-            .eq('id', purchaseId)
-
-          processedPurchases.push({ id: purchaseId, invoice_number: group.invoiceNumber })
-          successCount++
-          if (isUpdate) updatedCount++
-
-          if (user) {
-            await logDashboardActivity({
-              entityType: 'purchase',
-              action: isUpdate ? 'update' : 'create',
-              userId: user.id,
-              entityId: purchaseId,
-              description: `${isUpdate ? 'Updated' : 'Imported'} purchase invoice ${group.invoiceNumber}${inventoryUpdated ? ' — completed, inventory updated' : ' — completed'}`,
-              metadata: { supplier_id: supplierId, line_count: group.lines.length },
-            })
-          }
-        } catch (err: any) {
+        const supplierId = supplierByName.get(group.supplierName.toLowerCase())
+        if (!supplierId) {
+          errors.push(`Invoice ${group.invoiceNumber}: Supplier "${group.supplierName}" not found in the system`)
           errorCount++
-          errors.push(`Invoice ${group.invoiceNumber}: ${err.message}`)
+          continue
+        }
+        const existing = existingByInvoice.get(group.invoiceNumber)
+        if (existing) {
+          toUpdate.push({ id: existing.id, invoiceNumber: group.invoiceNumber, supplierId, invoiceDate: group.invoiceDate })
+        } else {
+          toCreate.push({ invoiceNumber: group.invoiceNumber, supplierId, invoiceDate: group.invoiceDate })
         }
       }
+
+      const [createdResult] = await Promise.all([
+        toCreate.length > 0
+          ? supabase.from('purchases').insert(
+              toCreate.map(c => ({
+                invoice_number: c.invoiceNumber,
+                supplier_id: c.supplierId,
+                invoice_date: c.invoiceDate,
+                status: 'draft',
+                created_by: user!.id,
+              }))
+            ).select('id, invoice_number')
+          : Promise.resolve({ data: [] as any[], error: null }),
+        toUpdate.length > 0
+          ? Promise.all(toUpdate.map(u =>
+              supabase.from('purchases')
+                .update({ supplier_id: u.supplierId, invoice_date: u.invoiceDate })
+                .eq('id', u.id)
+            ))
+          : Promise.resolve(),
+      ])
+
+      if ((createdResult as any).error) throw (createdResult as any).error
+
+      const purchaseIdByInvoice = new Map<string, string>()
+      for (const p of (createdResult as any).data ?? []) {
+        purchaseIdByInvoice.set(p.invoice_number, p.id)
+      }
+      for (const u of toUpdate) {
+        purchaseIdByInvoice.set(u.invoiceNumber, u.id)
+      }
+
+      // ── BATCH: Prepare all line items across every invoice ────────────────
+      interface LIMeta { warehouseName: string; invoiceNumber: string }
+      const liInserts: any[] = []
+      const liMetas: LIMeta[] = []
+
+      for (const [, group] of invoiceMap) {
+        const purchaseId = purchaseIdByInvoice.get(group.invoiceNumber)
+        if (!purchaseId) continue
+
+        let skippedLinesCount = 0
+        for (const line of group.lines) {
+          const matchedProductId =
+            (line.productIdRaw ? productByCode.get(line.productIdRaw.toLowerCase()) : undefined) ??
+            (line.productIdRaw ? productBySku.get(line.productIdRaw.toLowerCase()) : undefined) ??
+            (line.productIdRaw ? productByName.get(line.productIdRaw.toLowerCase()) : undefined) ??
+            (line.productIdRaw ? productData?.find((p: any) => p.id === line.productIdRaw)?.id : undefined)
+
+          if (!matchedProductId) { skippedLinesCount++; continue }
+
+          const taxAmount = parseFloat(((line.quantity * line.unitCost * line.taxPercent) / 100).toFixed(2))
+          liInserts.push({
+            purchase_id: purchaseId,
+            product_id: matchedProductId,
+            quantity: line.quantity,
+            unit_cost: line.unitCost,
+            landed_unit_cost: line.unitCost,
+            tax_percent: line.taxPercent,
+            tax_amount: taxAmount,
+            tax_recoverability: line.taxRecoverability,
+          })
+          liMetas.push({ warehouseName: line.warehouseName, invoiceNumber: group.invoiceNumber })
+        }
+
+        if (skippedLinesCount > 0) {
+          errors.push(`Invoice ${group.invoiceNumber}: ${skippedLinesCount} line item(s) skipped (product not found)`)
+        }
+        if (skippedLinesCount === group.lines.length) {
+          errors.push(`Invoice ${group.invoiceNumber}: all line items skipped — no matching products found`)
+          purchaseIdByInvoice.delete(group.invoiceNumber)
+          errorCount++
+        }
+      }
+
+      if (liInserts.length === 0) {
+        throw new Error(`Failed to import any purchases:\n${errors.slice(0, 10).join('\n')}`)
+      }
+
+      // Single batch insert for all line items
+      const { data: insertedLIs, error: liError } = await supabase
+        .from('purchase_line_items')
+        .insert(liInserts)
+        .select('id, product_id, quantity, unit_cost')
+      if (liError) throw liError
+
+      // ── BATCH: Build allocations + aggregate inventory additions ──────────
+      let localStorageId: string
+      try {
+        localStorageId = getWarehouseId('Local Storage')
+      } catch {
+        throw new Error('Warehouse "Local Storage" not found — it is required as the default warehouse')
+      }
+
+      const allocationInserts: any[] = []
+      // Aggregate quantity changes per product+warehouse to minimise inventory fetches
+      const inventoryDelta = new Map<string, { productId: string; warehouseId: string; qty: number }>()
+
+      for (let i = 0; i < (insertedLIs?.length ?? 0); i++) {
+        const li = insertedLIs![i]!
+        const meta = liMetas[i]!
+
+        let warehouseId: string
+        try {
+          warehouseId = meta.warehouseName ? getWarehouseId(meta.warehouseName) : localStorageId
+        } catch (err: any) {
+          errors.push(`Invoice ${meta.invoiceNumber}: ${err.message}`)
+          errorCount++
+          continue
+        }
+
+        allocationInserts.push({
+          purchase_line_item_id: li.id,
+          warehouse_location_id: warehouseId,
+          quantity: li.quantity,
+        })
+
+        const key = `${li.product_id}:::${warehouseId}`
+        const existing = inventoryDelta.get(key)
+        if (existing) {
+          existing.qty += li.quantity
+        } else {
+          inventoryDelta.set(key, { productId: li.product_id, warehouseId, qty: li.quantity })
+        }
+      }
+
+      // Single batch insert for all allocations
+      if (allocationInserts.length > 0) {
+        await supabase.from('purchase_allocations').insert(allocationInserts)
+      }
+
+      // Single inventory fetch, then parallel updates
+      const affectedProductIds = [...new Set([...inventoryDelta.values()].map(v => v.productId))]
+      const { data: currentInventory } = await supabase
+        .from('inventory')
+        .select('id, quantity, product_id, warehouse_location_id')
+        .in('product_id', affectedProductIds)
+
+      await Promise.all(
+        [...inventoryDelta.values()].map(({ productId, warehouseId, qty }) => {
+          const inv = currentInventory?.find(
+            (r: any) => r.product_id === productId && r.warehouse_location_id === warehouseId
+          )
+          if (inv) {
+            return supabase.from('inventory').update({ quantity: inv.quantity + qty }).eq('id', inv.id)
+          }
+          return supabase.from('inventory').insert({ product_id: productId, warehouse_location_id: warehouseId, quantity: qty })
+        })
+      )
+
+      // ── BATCH: Complete all purchases in one query ────────────────────────
+      const finalPurchaseIds = [...purchaseIdByInvoice.values()]
+      await supabase.from('purchases')
+        .update({ status: 'completed', completed_at: new Date().toISOString() })
+        .in('id', finalPurchaseIds)
+
+      // ── Audit logs in parallel ────────────────────────────────────────────
+      if (user) {
+        await Promise.all(
+          [...invoiceMap.values()]
+            .filter(g => purchaseIdByInvoice.has(g.invoiceNumber))
+            .map(g => logDashboardActivity({
+              entityType: 'purchase',
+              action: existingByInvoice.has(g.invoiceNumber) ? 'update' : 'create',
+              userId: user.id,
+              entityId: purchaseIdByInvoice.get(g.invoiceNumber)!,
+              description: `${existingByInvoice.has(g.invoiceNumber) ? 'Updated' : 'Imported'} purchase invoice ${g.invoiceNumber} — completed, inventory updated`,
+              metadata: { supplier_id: supplierByName.get(g.supplierName.toLowerCase()), line_count: g.lines.length },
+            }))
+        )
+      }
+
+      const successCount = purchaseIdByInvoice.size
+      const updatedCount = toUpdate.filter(u => purchaseIdByInvoice.has(u.invoiceNumber)).length
+      const newCount = successCount - updatedCount
 
       if (successCount === 0) {
         throw new Error(`Failed to import any purchases:\n${errors.slice(0, 10).join('\n')}`)
       }
 
-      const completedCount = processedPurchases.filter(p => {
-        const group = [...invoiceMap.values()].find(g => g.invoiceNumber === p.invoice_number)
-        return group?.lines.every(l => l.warehouseName)
-      }).length
-      const newCount = successCount - updatedCount
-
-      return { successCount, newCount, updatedCount, completedCount, errorCount, errors: [...skippedRows, ...errors] }
+      return { successCount, newCount, updatedCount, completedCount: successCount, errorCount, errors: [...skippedRows, ...errors] }
     },
     onSuccess: async (result) => {
       queryClient.invalidateQueries({ queryKey: ['purchases'] })
