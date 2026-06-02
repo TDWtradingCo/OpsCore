@@ -304,8 +304,10 @@ export function DashboardPage() {
       const dateMap = new Map<string, number>()
 
       // Pre-fill date range based on selected range
-      let current = new Date(start || new Date().toISOString().split('T')[0])
-      const endDateObj = new Date(end || new Date().toISOString().split('T')[0])
+      const startStr: string = start || new Date().toISOString().split('T')[0]
+      const endStr: string = end || new Date().toISOString().split('T')[0]
+      let current = new Date(startStr)
+      const endDateObj = new Date(endStr)
 
       if (dateRange === '7d') {
         while (current <= endDateObj) {
