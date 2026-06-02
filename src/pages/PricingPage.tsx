@@ -419,7 +419,6 @@ function AddPricingForm({
           placeholder="Search channels..."
           options={channels.map(ch => ({ value: ch.id, label: ch.name }))}
         />
-        </Select>
       </div>
       <div className="space-y-2">
         <Label>Retail Price (optional)</Label>
