@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { SearchableSelect } from '@/components/ui/searchable-select'
 import { Textarea } from '@/components/ui/textarea'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatCurrency } from '@/lib/utils'
@@ -536,16 +537,12 @@ export function PurchaseDetailPage() {
               </div>
               <div className="space-y-2">
                 <Label>Supplier *</Label>
-                <Select value={editSupplierId} onValueChange={setEditSupplierId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select supplier" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {suppliers?.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableSelect
+                  value={editSupplierId}
+                  onValueChange={setEditSupplierId}
+                  placeholder="Search suppliers..."
+                  options={suppliers?.map(s => ({ value: s.id, label: s.name })) ?? []}
+                />
               </div>
               <div className="space-y-2">
                 <Label>Invoice Date *</Label>

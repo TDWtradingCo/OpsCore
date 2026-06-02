@@ -64,6 +64,7 @@ export function DashboardPage() {
   ])
   const [draggingStatKey, setDraggingStatKey] = useState<string | null>(null)
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+  const [dateRange, setDateRange] = useState<'7d' | '30d' | '90d'>('30d')
 
   useEffect(() => {
     try {
@@ -91,6 +92,25 @@ export function DashboardPage() {
   useEffect(() => {
     localStorage.setItem(DASHBOARD_STATS_ORDER_KEY, JSON.stringify(statOrder))
   }, [statOrder])
+
+  // ── Date Range Helper ──
+  const getDateRange = () => {
+    const endDate = new Date()
+    const startDate = new Date()
+
+    if (dateRange === '7d') {
+      startDate.setDate(startDate.getDate() - 7)
+    } else if (dateRange === '30d') {
+      startDate.setDate(startDate.getDate() - 30)
+    } else if (dateRange === '90d') {
+      startDate.setDate(startDate.getDate() - 90)
+    }
+
+    return {
+      start: startDate.toISOString().split('T')[0],
+      end: endDate.toISOString().split('T')[0],
+    }
+  }
 
   // ── Stats Queries ──
   const { data: productCount } = useQuery({
@@ -267,39 +287,56 @@ export function DashboardPage() {
     },
   })
 
-  // ── Monthly Purchase Spending (last 6 months) ──
+  // ── Monthly Purchase Spending ──
   const { data: monthlySpending } = useQuery({
-    queryKey: ['dashboard-monthly-spending'],
+    queryKey: ['dashboard-monthly-spending', dateRange],
     queryFn: async () => {
-      const sixMonthsAgo = new Date()
-      sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6)
+      const { start, end } = getDateRange()
 
       const { data } = await supabase
         .from('purchases')
         .select('invoice_date, purchase_line_items(quantity, unit_cost)')
-        .gte('invoice_date', sixMonthsAgo.toISOString().split('T')[0])
+        .gte('invoice_date', start)
+        .lte('invoice_date', end)
 
-      const monthMap = new Map<string, number>()
+      const dateMap = new Map<string, number>()
 
-      // Pre-fill last 6 months
-      for (let i = 5; i >= 0; i--) {
-        const d = new Date()
-        d.setMonth(d.getMonth() - i)
-        const key = d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
-        monthMap.set(key, 0)
+      // Pre-fill date range based on selected range
+      let current = new Date(start)
+      const endDateObj = new Date(end)
+
+      if (dateRange === '7d') {
+        while (current <= endDateObj) {
+          const key = current.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          dateMap.set(key, 0)
+          current.setDate(current.getDate() + 1)
+        }
+      } else {
+        while (current <= endDateObj) {
+          const key = current.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
+          if (!dateMap.has(key)) {
+            dateMap.set(key, 0)
+          }
+          current.setMonth(current.getMonth() + 1)
+        }
       }
 
       data?.forEach((purchase: any) => {
         const date = new Date(purchase.invoice_date)
-        const key = date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
+        let key: string
+        if (dateRange === '7d') {
+          key = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        } else {
+          key = date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
+        }
         const purchaseTotal = (purchase.purchase_line_items ?? []).reduce(
           (sum: number, li: any) => sum + (li.quantity ?? 0) * (li.unit_cost ?? 0),
           0
         )
-        monthMap.set(key, (monthMap.get(key) ?? 0) + purchaseTotal)
+        dateMap.set(key, (dateMap.get(key) ?? 0) + purchaseTotal)
       })
 
-      return Array.from(monthMap.entries()).map(([month, total]) => ({ month, total }))
+      return Array.from(dateMap.entries()).map(([date, total]) => ({ month: date, total }))
     },
   })
 
@@ -412,6 +449,32 @@ export function DashboardPage() {
             </Button>
           </Link>
         </div>
+      </div>
+
+      {/* Date Range Filter */}
+      <div className="flex gap-2 flex-wrap">
+        <span className="text-sm font-medium text-muted-foreground py-2">Filter by:</span>
+        <Button
+          variant={dateRange === '7d' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setDateRange('7d')}
+        >
+          Last 7 days
+        </Button>
+        <Button
+          variant={dateRange === '30d' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setDateRange('30d')}
+        >
+          Last 30 days
+        </Button>
+        <Button
+          variant={dateRange === '90d' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setDateRange('90d')}
+        >
+          Last 90 days
+        </Button>
       </div>
 
       <Tabs defaultValue="overview" className="space-y-6">
