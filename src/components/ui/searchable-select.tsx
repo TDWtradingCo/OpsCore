@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
@@ -21,8 +22,10 @@ export function SearchableSelect({
 }: SearchableSelectProps) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({})
   const inputRef = useRef<HTMLInputElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
 
   const filtered = options.filter(opt =>
     opt.label.toLowerCase().includes(search.toLowerCase()) ||
@@ -31,29 +34,55 @@ export function SearchableSelect({
 
   const selectedLabel = options.find(opt => opt.value === value)?.label
 
+  const updatePosition = () => {
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect()
+      setDropdownStyle({
+        position: 'fixed',
+        top: rect.bottom + 4,
+        left: rect.left,
+        width: rect.width,
+        zIndex: 9999,
+      })
+    }
+  }
+
   useEffect(() => {
+    if (!open) return
+    updatePosition()
+    inputRef.current?.focus()
+    window.addEventListener('scroll', updatePosition, true)
+    window.addEventListener('resize', updatePosition)
+    return () => {
+      window.removeEventListener('scroll', updatePosition, true)
+      window.removeEventListener('resize', updatePosition)
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (
+        !triggerRef.current?.contains(e.target as Node) &&
+        !dropdownRef.current?.contains(e.target as Node)
+      ) {
         setOpen(false)
+        setSearch('')
       }
     }
-
-    if (open) {
-      document.addEventListener('mousedown', handleClickOutside)
-      inputRef.current?.focus()
-    }
-
+    document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [open])
 
   return (
-    <div className="relative w-full" ref={containerRef}>
+    <div className="relative w-full">
       <Button
+        ref={triggerRef}
         variant="outline"
         role="combobox"
         aria-expanded={open}
         className="w-full justify-between"
-        onClick={() => !disabled && setOpen(!open)}
+        onClick={() => !disabled && setOpen(prev => !prev)}
         disabled={disabled}
       >
         <span className="truncate text-left flex-1">
@@ -62,8 +91,12 @@ export function SearchableSelect({
         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
       </Button>
 
-      {open && !disabled && (
-        <div className="absolute top-full left-0 right-0 z-[9999] mt-1 border rounded-md bg-popover shadow-md">
+      {open && !disabled && createPortal(
+        <div
+          ref={dropdownRef}
+          style={dropdownStyle}
+          className="border rounded-md bg-popover shadow-md"
+        >
           <div className="p-2 border-b">
             <Input
               ref={inputRef}
@@ -96,7 +129,8 @@ export function SearchableSelect({
               ))
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
