@@ -401,15 +401,23 @@ export function PurchasesPage() {
               .select('id, quantity, product_id, warehouse_location_id')
               .in('product_id', affectedProductIds)
 
-            await Promise.all(
-              (affectedInv ?? []).map((inv: any) => {
+            const rollbackRows = (affectedInv ?? [])
+              .map((inv: any) => {
                 const reduction = reductions.get(`${inv.product_id}:::${inv.warehouse_location_id}`)
-                if (!reduction) return Promise.resolve()
-                return supabase.from('inventory')
-                  .update({ quantity: Math.max(0, inv.quantity - reduction) })
-                  .eq('id', inv.id)
+                if (!reduction) return null
+                return {
+                  id: inv.id,
+                  product_id: inv.product_id,
+                  warehouse_location_id: inv.warehouse_location_id,
+                  quantity: Math.max(0, inv.quantity - reduction),
+                }
               })
-            )
+              .filter((r): r is NonNullable<typeof r> => r !== null)
+
+            if (rollbackRows.length > 0) {
+              await supabase.from('inventory')
+                .upsert(rollbackRows, { onConflict: 'product_id,warehouse_location_id' })
+            }
           }
 
           await supabase.from('purchase_allocations').delete().in('purchase_line_item_id', oldLIIds)
@@ -579,23 +587,26 @@ export function PurchasesPage() {
         await supabase.from('purchase_allocations').insert(allocationInserts)
       }
 
-      // Single inventory fetch, then parallel updates
+      // Single inventory fetch, then single upsert for all changes
       const affectedProductIds = [...new Set([...inventoryDelta.values()].map(v => v.productId))]
       const { data: currentInventory } = await supabase
         .from('inventory')
         .select('id, quantity, product_id, warehouse_location_id')
         .in('product_id', affectedProductIds)
 
-      await Promise.all(
+      await supabase.from('inventory').upsert(
         [...inventoryDelta.values()].map(({ productId, warehouseId, qty }) => {
-          const inv = currentInventory?.find(
+          const existing = currentInventory?.find(
             (r: any) => r.product_id === productId && r.warehouse_location_id === warehouseId
           )
-          if (inv) {
-            return supabase.from('inventory').update({ quantity: inv.quantity + qty }).eq('id', inv.id)
+          return {
+            ...(existing?.id ? { id: existing.id } : {}),
+            product_id: productId,
+            warehouse_location_id: warehouseId,
+            quantity: (existing?.quantity ?? 0) + qty,
           }
-          return supabase.from('inventory').insert({ product_id: productId, warehouse_location_id: warehouseId, quantity: qty })
-        })
+        }),
+        { onConflict: 'product_id,warehouse_location_id' }
       )
 
       // ── BATCH: Complete all purchases in one query ────────────────────────
@@ -604,20 +615,22 @@ export function PurchasesPage() {
         .update({ status: 'completed', completed_at: new Date().toISOString() })
         .in('id', finalPurchaseIds)
 
-      // ── Audit logs in parallel ────────────────────────────────────────────
+      // ── Audit logs: single batch insert ──────────────────────────────────
       if (user) {
-        await Promise.all(
-          [...invoiceMap.values()]
-            .filter(g => purchaseIdByInvoice.has(g.invoiceNumber))
-            .map(g => logDashboardActivity({
-              entityType: 'purchase',
-              action: existingByInvoice.has(g.invoiceNumber) ? 'update' : 'create',
-              userId: user.id,
-              entityId: purchaseIdByInvoice.get(g.invoiceNumber)!,
-              description: `${existingByInvoice.has(g.invoiceNumber) ? 'Updated' : 'Imported'} purchase invoice ${g.invoiceNumber} — completed, inventory updated`,
-              metadata: { supplier_id: supplierByName.get(g.supplierName.toLowerCase()), line_count: g.lines.length },
-            }))
-        )
+        const auditRows = [...invoiceMap.values()]
+          .filter(g => purchaseIdByInvoice.has(g.invoiceNumber))
+          .map(g => ({
+            entity_type: 'purchase',
+            action: existingByInvoice.has(g.invoiceNumber) ? 'update' : 'create',
+            user_id: user.id,
+            entity_id: purchaseIdByInvoice.get(g.invoiceNumber),
+            description: `${existingByInvoice.has(g.invoiceNumber) ? 'Updated' : 'Imported'} purchase invoice ${g.invoiceNumber} — completed, inventory updated`,
+            metadata: { supplier_id: supplierByName.get(g.supplierName.toLowerCase()), line_count: g.lines.length },
+          }))
+        if (auditRows.length > 0) {
+          const { error: auditError } = await supabase.from('dashboard_activity_log').insert(auditRows)
+          if (auditError) console.error('Failed to write audit log:', auditError.message)
+        }
       }
 
       const successCount = purchaseIdByInvoice.size
