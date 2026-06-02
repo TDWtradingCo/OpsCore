@@ -291,7 +291,9 @@ export function DashboardPage() {
   const { data: monthlySpending } = useQuery({
     queryKey: ['dashboard-monthly-spending', dateRange],
     queryFn: async () => {
-      const { start, end } = getDateRange()
+      const range = getDateRange()
+      const start = range.start || ''
+      const end = range.end || ''
 
       const { data } = await supabase
         .from('purchases')
@@ -302,8 +304,8 @@ export function DashboardPage() {
       const dateMap = new Map<string, number>()
 
       // Pre-fill date range based on selected range
-      let current = new Date(start)
-      const endDateObj = new Date(end)
+      let current = new Date(start || new Date().toISOString().split('T')[0])
+      const endDateObj = new Date(end || new Date().toISOString().split('T')[0])
 
       if (dateRange === '7d') {
         while (current <= endDateObj) {
