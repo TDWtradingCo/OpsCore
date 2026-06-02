@@ -95,7 +95,7 @@ export function SearchableSelect({
         <div
           ref={dropdownRef}
           style={dropdownStyle}
-          className="border rounded-md bg-popover shadow-md"
+          className="border border-border rounded-md bg-white dark:bg-gray-950 shadow-lg"
         >
           <div className="p-2 border-b">
             <Input
