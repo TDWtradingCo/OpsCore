@@ -63,7 +63,7 @@ export function SearchableSelect({
       </Button>
 
       {open && !disabled && (
-        <div className="absolute top-full left-0 right-0 z-50 mt-1 border rounded-md bg-popover shadow-md">
+        <div className="absolute top-full left-0 right-0 z-[9999] mt-1 border rounded-md bg-popover shadow-md">
           <div className="p-2 border-b">
             <Input
               ref={inputRef}
