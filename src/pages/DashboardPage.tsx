@@ -107,8 +107,8 @@ export function DashboardPage() {
     }
 
     return {
-      start: startDate.toISOString().split('T')[0],
-      end: endDate.toISOString().split('T')[0],
+      start: startDate.toISOString().split('T')[0]!,
+      end: endDate.toISOString().split('T')[0]!,
     }
   }
 
