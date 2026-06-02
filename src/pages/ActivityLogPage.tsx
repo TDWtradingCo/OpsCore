@@ -202,7 +202,7 @@ export function ActivityLogPage() {
                           {(log.action ?? '').replace('_', ' ')}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-sm text-muted-foreground max-w-[320px] truncate">{log.description ?? '—'}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground whitespace-normal">{log.description ?? '—'}</TableCell>
                       <TableCell className="text-sm">{log.user?.full_name ?? log.user?.email ?? '—'}</TableCell>
                     </TableRow>
                   ))

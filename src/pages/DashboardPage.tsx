@@ -336,7 +336,13 @@ export function DashboardPage() {
         dateMap.set(key, (dateMap.get(key) ?? 0) + purchaseTotal)
       })
 
-      return Array.from(dateMap.entries()).map(([date, total]) => ({ month: date, total }))
+      // Sort dates chronologically (oldest to newest)
+      const sortedEntries = Array.from(dateMap.entries()).sort((a, b) => {
+        const dateA = new Date(a[0])
+        const dateB = new Date(b[0])
+        return dateA.getTime() - dateB.getTime()
+      })
+      return sortedEntries.map(([date, total]) => ({ month: date, total }))
     },
   })
 

@@ -497,9 +497,12 @@ export function PurchasesPage() {
             errors.push(`Invoice ${group.invoiceNumber}: ${skippedLinesCount} line item(s) skipped (product not found)`)
           }
 
-          // ── Auto-complete + update inventory if warehouse provided ────────
+          // ── Auto-complete all purchases + update inventory if warehouse provided ────────
           const allHaveWarehouse = createdLIs.every(li => li.warehouseName)
+          let inventoryUpdated = false
+
           if (allHaveWarehouse) {
+            // If warehouse is provided, allocate and update inventory
             for (const li of createdLIs) {
               const warehouseId = await getWarehouseId(li.warehouseName)
 
@@ -525,10 +528,13 @@ export function PurchasesPage() {
                 await supabase.from('inventory').insert({ product_id: li.productId, warehouse_location_id: warehouseId, quantity: li.quantity })
               }
             }
-            await supabase.from('purchases')
-              .update({ status: 'completed', completed_at: new Date().toISOString() })
-              .eq('id', purchaseId)
+            inventoryUpdated = true
           }
+
+          // Auto-complete all purchases (with or without warehouse)
+          await supabase.from('purchases')
+            .update({ status: 'completed', completed_at: new Date().toISOString() })
+            .eq('id', purchaseId)
 
           processedPurchases.push({ id: purchaseId, invoice_number: group.invoiceNumber })
           successCount++
@@ -540,7 +546,7 @@ export function PurchasesPage() {
               action: isUpdate ? 'update' : 'create',
               userId: user.id,
               entityId: purchaseId,
-              description: `${isUpdate ? 'Updated' : 'Imported'} purchase invoice ${group.invoiceNumber}${allHaveWarehouse ? ' — inventory updated' : ' (draft)'}`,
+              description: `${isUpdate ? 'Updated' : 'Imported'} purchase invoice ${group.invoiceNumber}${inventoryUpdated ? ' — completed, inventory updated' : ' — completed'}`,
               metadata: { supplier_id: supplierId, line_count: group.lines.length },
             })
           }
