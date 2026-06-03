@@ -83,7 +83,12 @@ export function PurchasesPage() {
 
       const { data, error } = await query
       if (error) throw error
-      return data
+      const seen = new Set<string>()
+      return (data ?? []).filter(p => {
+        if (seen.has(p.id)) return false
+        seen.add(p.id)
+        return true
+      })
     },
   })
 
@@ -312,13 +317,24 @@ export function PurchasesPage() {
         if (!supplierName)  { skippedRows.push(`Row ${i + 2}: missing supplier name`); continue }
         if (!invoiceDate)   { skippedRows.push(`Row ${i + 2}: missing or unrecognised date`); continue }
 
-        const quantity    = parseInt(row.quantity ?? '', 10)
+        // Support multiple quantity field names (quantity, quanty, qty)
+        const qtyRaw = row.quantity ?? row.quanty ?? row.qty ?? ''
+        const quantity = parseInt(qtyRaw, 10)
+
+        // Support unit cost and amount fields
         const unitCostRaw = (row.unit_cost ?? '').replace(/[$,\s]/g, '')
-        const unitCost    = parseFloat(unitCostRaw)
+        let unitCost = parseFloat(unitCostRaw)
+
+        const amountRaw = (row.amount ?? row.subtotal ?? '').replace(/[$,\s]/g, '')
+        const amount = parseFloat(amountRaw)
+
+        // If unit_cost is not provided but amount (subtotal) and quantity are, calculate unit_cost
+        if ((!Number.isFinite(unitCost) || unitCost <= 0) && Number.isFinite(amount) && amount > 0 && Number.isFinite(quantity) && quantity > 0) {
+          unitCost = parseFloat((amount / quantity).toFixed(4))
+        }
 
         // Prefer an explicit "Tax Percentage" column.
         // Note: `parseCSV()` normalizes headers like "Tax Percentage (%)" -> `tax_percentage`.
-        // Some CSVs also include a "Tax" (amount) column; we must NOT treat that as a percent.
         const taxPercentRawCandidate =
           row['tax_percentage'] ??
           row['tax_percent'] ??
@@ -327,7 +343,22 @@ export function PurchasesPage() {
           ''
 
         const taxPercentRaw = String(taxPercentRawCandidate).replace(/[$,\s%]/g, '')
-        const taxPercent = parseFloat(taxPercentRaw || '0') || 0
+        let taxPercent = parseFloat(taxPercentRaw || '0') || 0
+
+        // Tax Amount (can calculate taxPercent if missing)
+        const taxAmountRawCandidate =
+          row['tax_amount'] ??
+          row['tax'] ??
+          row['taxamount'] ??
+          ''
+        const taxAmountRaw = String(taxAmountRawCandidate).replace(/[$,\s]/g, '')
+        const taxAmountVal = parseFloat(taxAmountRaw || '0') || 0
+
+        // If tax percent is not specified, but tax amount is, compute the percent
+        if (taxPercent === 0 && taxAmountVal > 0 && quantity > 0 && unitCost > 0) {
+          taxPercent = parseFloat(((taxAmountVal / (quantity * unitCost)) * 100).toFixed(4))
+        }
+
         const taxRecoverability = (row.tax_type ?? row.tax_recoverability)?.trim() || 'recoverable'
         const warehouseName = row.warehouse_name?.trim() || ''
 
@@ -357,16 +388,42 @@ export function PurchasesPage() {
 
       // ── BATCH: Check all invoices in one query ────────────────────────────
       const allInvoiceNumbers = [...invoiceMap.values()].map(g => g.invoiceNumber)
+      console.log('🔍 Invoice numbers from CSV:', allInvoiceNumbers)
+
       const { data: existingPurchases } = await supabase
         .from('purchases')
-        .select('id, status, invoice_number')
+        .select('id, status, invoice_number, supplier_id')
         .in('invoice_number', allInvoiceNumbers)
 
-      const existingByInvoice = new Map(
-        existingPurchases?.map((p: any) => [p.invoice_number as string, p]) ?? []
-      )
-      const completedIds = existingPurchases?.filter((p: any) => p.status === 'completed').map((p: any) => p.id as string) ?? []
-      const allExistingIds = existingPurchases?.map((p: any) => p.id as string) ?? []
+      console.log('📦 Existing purchases found in DB:', existingPurchases?.map(p => ({ id: p.id, invoice: p.invoice_number, supplier: p.supplier_id, status: p.status })))
+
+      // Group by invoice_number + supplier_id to detect DB duplicates
+      const existingByKeyAll = new Map<string, any[]>()
+      for (const p of existingPurchases ?? []) {
+        const key = `${p.invoice_number.toLowerCase()}|||${p.supplier_id}`
+        const arr = existingByKeyAll.get(key) ?? []
+        arr.push(p)
+        existingByKeyAll.set(key, arr)
+      }
+
+      // For each key (invoice_number + supplier_id) with >1 DB row, keep the best (completed first) and delete extras
+      const duplicateIdsToDelete: string[] = []
+      const existingByKey = new Map<string, any>()
+      for (const [key, matches] of existingByKeyAll) {
+        const best = matches.find((p: any) => p.status === 'completed') ?? matches[0]!
+        existingByKey.set(key, best)
+        for (const p of matches) {
+          if (p.id !== best.id) duplicateIdsToDelete.push(p.id)
+        }
+      }
+
+      const completedIds = [
+        ...[...existingByKey.values()].filter((p: any) => p.status === 'completed').map((p: any) => p.id as string),
+        ...(existingPurchases ?? [])
+          .filter((p: any) => duplicateIdsToDelete.includes(p.id) && p.status === 'completed')
+          .map((p: any) => p.id as string)
+      ]
+      const allExistingIds = [...existingByKey.values()].map((p: any) => p.id as string)
 
       // ── BATCH: Revert inventory for completed purchases being re-imported ──
       if (completedIds.length > 0) {
@@ -429,6 +486,12 @@ export function PurchasesPage() {
         ])
       }
 
+      // Delete the duplicate purchase records from DB after their inventory has been safely rolled back
+      if (duplicateIdsToDelete.length > 0) {
+        await supabase.from('purchase_line_items').delete().in('purchase_id', duplicateIdsToDelete)
+        await supabase.from('purchases').delete().in('id', duplicateIdsToDelete)
+      }
+
       // Delete line items for non-completed existing purchases (drafts being re-imported)
       const draftExistingIds = allExistingIds.filter(id => !completedIds.includes(id))
       if (draftExistingIds.length > 0) {
@@ -449,7 +512,8 @@ export function PurchasesPage() {
           errorCount++
           continue
         }
-        const existing = existingByInvoice.get(group.invoiceNumber)
+        const lookupKey = `${group.invoiceNumber.toLowerCase()}|||${supplierId}`
+        const existing = existingByKey.get(lookupKey)
         if (existing) {
           toUpdate.push({ id: existing.id, invoiceNumber: group.invoiceNumber, supplierId, invoiceDate: group.invoiceDate })
         } else {
@@ -457,6 +521,7 @@ export function PurchasesPage() {
         }
       }
 
+      // Batch create new purchases + single upsert to update existing headers
       const [createdResult] = await Promise.all([
         toCreate.length > 0
           ? supabase.from('purchases').insert(
@@ -467,25 +532,34 @@ export function PurchasesPage() {
                 status: 'draft',
                 created_by: user!.id,
               }))
-            ).select('id, invoice_number')
+            ).select('id, invoice_number, supplier_id')
           : Promise.resolve({ data: [] as any[], error: null }),
         toUpdate.length > 0
-          ? Promise.all(toUpdate.map(u =>
-              supabase.from('purchases')
-                .update({ supplier_id: u.supplierId, invoice_date: u.invoiceDate })
-                .eq('id', u.id)
-            ))
+          ? supabase.from('purchases').upsert(
+              toUpdate.map(u => ({
+                id: u.id,
+                supplier_id: u.supplierId,
+                invoice_date: u.invoiceDate,
+              })),
+              { onConflict: 'id' }
+            )
           : Promise.resolve(),
       ])
 
       if ((createdResult as any).error) throw (createdResult as any).error
 
-      const purchaseIdByInvoice = new Map<string, string>()
+      // Track newly created vs existing purchase IDs separately so we can
+      // delete orphans (invoices where no product lines matched)
+      const newPurchaseIdByKey = new Map<string, string>()
+      const purchaseIdByKey = new Map<string, string>()
       for (const p of (createdResult as any).data ?? []) {
-        purchaseIdByInvoice.set(p.invoice_number, p.id)
+        const key = `${p.invoice_number.toLowerCase()}|||${p.supplier_id}`
+        purchaseIdByKey.set(key, p.id)
+        newPurchaseIdByKey.set(key, p.id)
       }
       for (const u of toUpdate) {
-        purchaseIdByInvoice.set(u.invoiceNumber, u.id)
+        const key = `${u.invoiceNumber.toLowerCase()}|||${u.supplierId}`
+        purchaseIdByKey.set(key, u.id)
       }
 
       // ── BATCH: Prepare all line items across every invoice ────────────────
@@ -494,7 +568,10 @@ export function PurchasesPage() {
       const liMetas: LIMeta[] = []
 
       for (const [, group] of invoiceMap) {
-        const purchaseId = purchaseIdByInvoice.get(group.invoiceNumber)
+        const supplierId = supplierByName.get(group.supplierName.toLowerCase())
+        if (!supplierId) continue
+        const lookupKey = `${group.invoiceNumber.toLowerCase()}|||${supplierId}`
+        const purchaseId = purchaseIdByKey.get(lookupKey)
         if (!purchaseId) continue
 
         let skippedLinesCount = 0
@@ -521,14 +598,23 @@ export function PurchasesPage() {
           liMetas.push({ warehouseName: line.warehouseName, invoiceNumber: group.invoiceNumber })
         }
 
-        if (skippedLinesCount > 0) {
-          errors.push(`Invoice ${group.invoiceNumber}: ${skippedLinesCount} line item(s) skipped (product not found)`)
-        }
         if (skippedLinesCount === group.lines.length) {
-          errors.push(`Invoice ${group.invoiceNumber}: all line items skipped — no matching products found`)
-          purchaseIdByInvoice.delete(group.invoiceNumber)
+          errors.push(`Invoice ${group.invoiceNumber}: all ${group.lines.length} line item(s) skipped — no matching products found`)
+          const key = `${group.invoiceNumber.toLowerCase()}|||${supplierId}`
+          purchaseIdByKey.delete(key)
           errorCount++
+        } else if (skippedLinesCount > 0) {
+          errors.push(`Invoice ${group.invoiceNumber}: ${skippedLinesCount} of ${group.lines.length} line item(s) skipped (product not found)`)
         }
+      }
+
+      // Delete any newly created purchases whose lines all failed to match —
+      // they were created as drafts above but have no line items, so remove them
+      const orphanIds = [...newPurchaseIdByKey.entries()]
+        .filter(([key]) => !purchaseIdByKey.has(key))
+        .map(([, id]) => id)
+      if (orphanIds.length > 0) {
+        await supabase.from('purchases').delete().in('id', orphanIds)
       }
 
       if (liInserts.length === 0) {
@@ -610,7 +696,7 @@ export function PurchasesPage() {
       )
 
       // ── BATCH: Complete all purchases in one query ────────────────────────
-      const finalPurchaseIds = [...purchaseIdByInvoice.values()]
+      const finalPurchaseIds = [...purchaseIdByKey.values()]
       await supabase.from('purchases')
         .update({ status: 'completed', completed_at: new Date().toISOString() })
         .in('id', finalPurchaseIds)
@@ -618,23 +704,36 @@ export function PurchasesPage() {
       // ── Audit logs: single batch insert ──────────────────────────────────
       if (user) {
         const auditRows = [...invoiceMap.values()]
-          .filter(g => purchaseIdByInvoice.has(g.invoiceNumber))
-          .map(g => ({
-            entity_type: 'purchase',
-            action: existingByInvoice.has(g.invoiceNumber) ? 'update' : 'create',
-            user_id: user.id,
-            entity_id: purchaseIdByInvoice.get(g.invoiceNumber),
-            description: `${existingByInvoice.has(g.invoiceNumber) ? 'Updated' : 'Imported'} purchase invoice ${g.invoiceNumber} — completed, inventory updated`,
-            metadata: { supplier_id: supplierByName.get(g.supplierName.toLowerCase()), line_count: g.lines.length },
-          }))
+          .filter(g => {
+            const supplierId = supplierByName.get(g.supplierName.toLowerCase())
+            if (!supplierId) return false
+            const key = `${g.invoiceNumber.toLowerCase()}|||${supplierId}`
+            return purchaseIdByKey.has(key)
+          })
+          .map(g => {
+            const supplierId = supplierByName.get(g.supplierName.toLowerCase())!
+            const key = `${g.invoiceNumber.toLowerCase()}|||${supplierId}`
+            const hasExisting = existingByKey.has(key)
+            return {
+              entity_type: 'purchase',
+              action: hasExisting ? 'update' : 'create',
+              user_id: user.id,
+              entity_id: purchaseIdByKey.get(key),
+              description: `${hasExisting ? 'Updated' : 'Imported'} purchase invoice ${g.invoiceNumber} — completed, inventory updated`,
+              metadata: { supplier_id: supplierId, line_count: g.lines.length },
+            }
+          })
         if (auditRows.length > 0) {
           const { error: auditError } = await supabase.from('dashboard_activity_log').insert(auditRows)
           if (auditError) console.error('Failed to write audit log:', auditError.message)
         }
       }
 
-      const successCount = purchaseIdByInvoice.size
-      const updatedCount = toUpdate.filter(u => purchaseIdByInvoice.has(u.invoiceNumber)).length
+      const successCount = purchaseIdByKey.size
+      const updatedCount = toUpdate.filter(u => {
+        const key = `${u.invoiceNumber.toLowerCase()}|||${u.supplierId}`
+        return purchaseIdByKey.has(key)
+      }).length
       const newCount = successCount - updatedCount
 
       if (successCount === 0) {
@@ -797,7 +896,9 @@ export function PurchasesPage() {
       product_id: 'PRD-1001',
       quantity: '500',
       unit_cost: '12.50',
+      amount: '6250.00',
       tax_percent: '10',
+      tax_amount: '625.00',
       tax_recoverability: 'recoverable',
       warehouse_name: 'WFS CA',
       notes: 'Fill warehouse_name to auto-complete and update inventory',
@@ -808,7 +909,9 @@ export function PurchasesPage() {
       product_id: 'PRD-1005',
       quantity: '250',
       unit_cost: '45.75',
+      amount: '11437.50',
       tax_percent: '8',
+      tax_amount: '915.00',
       tax_recoverability: 'recoverable',
       warehouse_name: 'WFS CA',
       notes: 'Standard order',
@@ -820,7 +923,9 @@ export function PurchasesPage() {
       { key: 'product_id', header: 'Product ID / SKU / Code *' },
       { key: 'quantity', header: 'Quantity *' },
       { key: 'unit_cost', header: 'Unit Cost *' },
+      { key: 'amount', header: 'Amount' },
       { key: 'tax_percent', header: 'Tax Percentage (%)' },
+      { key: 'tax_amount', header: 'Tax Amount' },
       { key: 'tax_recoverability', header: 'Tax Type (recoverable/non_recoverable)' },
       { key: 'warehouse_name', header: 'Warehouse Name (fills inventory on import)' },
       { key: 'notes', header: 'Notes' },
@@ -845,20 +950,105 @@ export function PurchasesPage() {
           <p className="text-muted-foreground">Manage purchase invoices and landed costs</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Button variant="outline" size="sm" onClick={() => {
+          <Button variant="outline" size="sm" onClick={async () => {
             if (!purchases?.length) return
-            exportToCSV(purchases.map((p: any) => ({
-              ...p,
-              supplier_name: p.supplier?.name ?? '',
-            })), 'purchases', [
-              { key: 'invoice_number', header: 'Invoice #' },
-              { key: 'supplier_name', header: 'Supplier' },
-              { key: 'invoice_date', header: 'Date' },
-              { key: 'status', header: 'Status' },
-              { key: 'notes', header: 'Notes' },
-              { key: 'created_at', header: 'Created' },
-            ])
-            toast.success('Purchases exported')
+            try {
+              const purchaseIds = purchases.map((p: any) => p.id)
+              const { data: lineItemsData, error } = await supabase
+                .from('purchase_line_items')
+                .select(`
+                  *,
+                  product:products(sku, name, product_code),
+                  purchase_allocations(
+                    quantity,
+                    warehouse_location:warehouse_locations(name)
+                  )
+                `)
+                .in('purchase_id', purchaseIds)
+
+              if (error) throw error
+
+              // Group line items by purchase_id for easy lookup
+              const lineItemsByPurchase = new Map<string, any[]>()
+              for (const li of lineItemsData ?? []) {
+                const list = lineItemsByPurchase.get(li.purchase_id) ?? []
+                list.push(li)
+                lineItemsByPurchase.set(li.purchase_id, list)
+              }
+
+              const exportData: any[] = []
+              for (const p of purchases) {
+                const pLineItems = lineItemsByPurchase.get(p.id) ?? []
+                const supplierName = p.supplier?.name ?? ''
+
+                // Format date as MM/DD/YYYY for template compatibility
+                let formattedDate = ''
+                if (p.invoice_date) {
+                  const d = new Date(p.invoice_date)
+                  if (!isNaN(d.getTime())) {
+                    const month = String(d.getUTCMonth() + 1).padStart(2, '0')
+                    const day = String(d.getUTCDate()).padStart(2, '0')
+                    const year = d.getUTCFullYear()
+                    formattedDate = `${month}/${day}/${year}`
+                  }
+                }
+
+                if (pLineItems.length === 0) {
+                  exportData.push({
+                    invoice_number: p.invoice_number,
+                    supplier_name: supplierName,
+                    invoice_date: formattedDate,
+                    product_id: '',
+                    quantity: '',
+                    unit_cost: '',
+                    amount: '',
+                    tax_percent: '',
+                    tax_amount: '',
+                    tax_recoverability: '',
+                    warehouse_name: '',
+                    notes: p.notes ?? '',
+                  })
+                } else {
+                  for (const li of pLineItems) {
+                    const productId = li.product?.sku ?? li.product?.product_code ?? li.product?.name ?? ''
+                    const amount = (li.quantity * li.unit_cost).toFixed(2)
+                    const warehouseName = li.purchase_allocations?.[0]?.warehouse_location?.name ?? ''
+                    exportData.push({
+                      invoice_number: p.invoice_number,
+                      supplier_name: supplierName,
+                      invoice_date: formattedDate,
+                      product_id: productId,
+                      quantity: String(li.quantity),
+                      unit_cost: String(li.unit_cost),
+                      amount: amount,
+                      tax_percent: String(li.tax_percent),
+                      tax_amount: String(li.tax_amount),
+                      tax_recoverability: li.tax_recoverability,
+                      warehouse_name: warehouseName,
+                      notes: p.notes ?? '',
+                    })
+                  }
+                }
+              }
+
+              exportToCSV(exportData, 'purchases-export', [
+                { key: 'invoice_number', header: 'Invoice Number *' },
+                { key: 'supplier_name', header: 'Supplier Name (must exist) *' },
+                { key: 'invoice_date', header: 'Invoice Date (MM/DD/YYYY) *' },
+                { key: 'product_id', header: 'Product ID / SKU / Code *' },
+                { key: 'quantity', header: 'Quantity *' },
+                { key: 'unit_cost', header: 'Unit Cost *' },
+                { key: 'amount', header: 'Amount' },
+                { key: 'tax_percent', header: 'Tax Percentage (%)' },
+                { key: 'tax_amount', header: 'Tax Amount' },
+                { key: 'tax_recoverability', header: 'Tax Type (recoverable/non_recoverable)' },
+                { key: 'warehouse_name', header: 'Warehouse Name (fills inventory on import)' },
+                { key: 'notes', header: 'Notes' },
+              ])
+              toast.success('Purchases exported')
+            } catch (err: any) {
+              toast.error(err.message || 'Failed to export purchases')
+            }
           }} disabled={!purchases?.length}>
             <Download className="h-4 w-4 mr-1" />
             Export
