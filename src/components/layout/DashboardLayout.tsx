@@ -16,6 +16,7 @@ import {
   MapPin,
   CircleDot,
   BarChart3,
+  ShoppingBag,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
@@ -23,6 +24,7 @@ import { Button } from '@/components/ui/button'
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { name: 'Orders', href: '/orders', icon: ShoppingBag },
   { name: 'Products', href: '/products', icon: Package },
   { name: 'Inventory', href: '/inventory', icon: Warehouse },
   { name: 'Purchases', href: '/purchases', icon: ShoppingCart },

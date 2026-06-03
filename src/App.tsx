@@ -16,6 +16,7 @@ import { SalesChannelsPage } from '@/pages/SalesChannelsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { ActivityLogPage } from '@/pages/ActivityLogPage'
 import { ShipmentTrackingPage } from '@/pages/ShipmentTrackingPage'
+import { OrdersPage } from '@/pages/OrdersPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
@@ -52,6 +53,7 @@ export default function App() {
             <DashboardLayout>
               <Routes>
                 <Route path="/" element={<DashboardPage />} />
+                <Route path="/orders" element={<OrdersPage />} />
                 <Route path="/products" element={<ProductsPage />} />
                 <Route path="/products/:id" element={<ProductDetailPage />} />
                 <Route path="/inventory" element={<InventoryPage />} />
