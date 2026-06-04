@@ -291,6 +291,7 @@ export function PurchasesPage() {
         quantity: number
         unitCost: number
         taxPercent: number
+        taxAmount: number | null
         taxRecoverability: string
         rowIndex: number
         warehouseName: string
@@ -377,7 +378,7 @@ export function PurchasesPage() {
           invoiceMap.set(groupKey, { invoiceNumber, supplierName, invoiceDate, lines: [] })
         }
         invoiceMap.get(groupKey)!.lines.push({
-          productIdRaw, quantity, unitCost, taxPercent, taxRecoverability, rowIndex: i + 2, warehouseName,
+          productIdRaw, quantity, unitCost, taxPercent, taxAmount: taxAmountVal, taxRecoverability, rowIndex: i + 2, warehouseName,
         })
       }
 
@@ -386,14 +387,22 @@ export function PurchasesPage() {
         throw new Error(`No valid rows found.${detail}`)
       }
 
-      // ── BATCH: Check all invoices in one query ────────────────────────────
+      // ── BATCH: Check all invoices in one query (case-insensitive chunked) ──
       const allInvoiceNumbers = [...invoiceMap.values()].map(g => g.invoiceNumber)
       console.log('🔍 Invoice numbers from CSV:', allInvoiceNumbers)
 
-      const { data: existingPurchases } = await supabase
-        .from('purchases')
-        .select('id, status, invoice_number, supplier_id')
-        .in('invoice_number', allInvoiceNumbers)
+      const existingPurchases: any[] = []
+      const chunkSize = 50
+      for (let j = 0; j < allInvoiceNumbers.length; j += chunkSize) {
+        const chunk = allInvoiceNumbers.slice(j, j + chunkSize)
+        const orFilter = chunk.map(num => `invoice_number.ilike."${num.replace(/"/g, '\\"')}"`).join(',')
+        const { data, error } = await supabase
+          .from('purchases')
+          .select('id, status, invoice_number, supplier_id')
+          .or(orFilter)
+        if (error) throw error
+        if (data) existingPurchases.push(...data)
+      }
 
       console.log('📦 Existing purchases found in DB:', existingPurchases?.map(p => ({ id: p.id, invoice: p.invoice_number, supplier: p.supplier_id, status: p.status })))
 
@@ -498,6 +507,65 @@ export function PurchasesPage() {
         await supabase.from('purchase_line_items').delete().in('purchase_id', draftExistingIds)
       }
 
+      // ── BATCH: Auto-create missing suppliers on the fly ───────────────────
+      const newSupplierNames = new Set<string>()
+      for (const [, group] of invoiceMap) {
+        const lower = group.supplierName.toLowerCase()
+        if (!supplierByName.has(lower)) {
+          newSupplierNames.add(group.supplierName.trim())
+        }
+      }
+
+      if (newSupplierNames.size > 0) {
+        const { data: createdSuppliers, error: supplierErr } = await supabase
+          .from('suppliers')
+          .insert([...newSupplierNames].map(name => ({ name })))
+          .select('id, name')
+        if (supplierErr) throw supplierErr
+        for (const s of createdSuppliers ?? []) {
+          supplierByName.set(s.name.toLowerCase(), s.id)
+        }
+      }
+
+      // ── BATCH: Auto-create missing warehouse locations on the fly ─────────
+      const newWarehouseNames = new Set<string>()
+      if (!warehouseByName.has('local storage')) {
+        newWarehouseNames.add('Local Storage')
+      }
+      for (const [, group] of invoiceMap) {
+        for (const line of group.lines) {
+          if (line.warehouseName) {
+            const lower = line.warehouseName.toLowerCase()
+            if (!warehouseByName.has(lower)) {
+              newWarehouseNames.add(line.warehouseName.trim())
+            }
+          }
+        }
+      }
+
+      if (newWarehouseNames.size > 0) {
+        const { data: createdWarehouses, error: whErr } = await supabase
+          .from('warehouse_locations')
+          .insert([...newWarehouseNames].map(name => ({ name })))
+          .select('id, name')
+        
+        if (whErr) {
+          console.warn('Could not auto-create warehouse locations, using existing ones:', whErr.message)
+        } else if (createdWarehouses) {
+          for (const w of createdWarehouses) {
+            warehouseByName.set(w.name.toLowerCase(), w.id)
+          }
+        }
+      }
+
+      let localStorageId = warehouseByName.get('local storage')
+      if (!localStorageId && warehouseData && warehouseData.length > 0 && warehouseData[0]) {
+        localStorageId = warehouseData[0].id
+      }
+      if (!localStorageId) {
+        throw new Error('No warehouse locations found in the system. Please create a warehouse location first.')
+      }
+
       // ── BATCH: Create new purchases + update existing headers in parallel ──
       const errors: string[] = []
       let errorCount = 0
@@ -538,6 +606,7 @@ export function PurchasesPage() {
           ? supabase.from('purchases').upsert(
               toUpdate.map(u => ({
                 id: u.id,
+                invoice_number: u.invoiceNumber,
                 supplier_id: u.supplierId,
                 invoice_date: u.invoiceDate,
               })),
@@ -584,7 +653,10 @@ export function PurchasesPage() {
 
           if (!matchedProductId) { skippedLinesCount++; continue }
 
-          const taxAmount = parseFloat(((line.quantity * line.unitCost * line.taxPercent) / 100).toFixed(2))
+          const taxAmount = line.taxAmount !== null && line.taxAmount > 0
+            ? line.taxAmount
+            : parseFloat(((line.quantity * line.unitCost * line.taxPercent) / 100).toFixed(2))
+
           liInserts.push({
             purchase_id: purchaseId,
             product_id: matchedProductId,
@@ -629,13 +701,6 @@ export function PurchasesPage() {
       if (liError) throw liError
 
       // ── BATCH: Build allocations + aggregate inventory additions ──────────
-      let localStorageId: string
-      try {
-        localStorageId = getWarehouseId('Local Storage')
-      } catch {
-        throw new Error('Warehouse "Local Storage" not found — it is required as the default warehouse')
-      }
-
       const allocationInserts: any[] = []
       // Aggregate quantity changes per product+warehouse to minimise inventory fetches
       const inventoryDelta = new Map<string, { productId: string; warehouseId: string; qty: number }>()
