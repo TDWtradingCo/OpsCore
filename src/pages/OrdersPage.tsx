@@ -230,18 +230,33 @@ export function OrdersPage() {
         }
 
         let result = data ?? []
-        // Convert to standard format
-        result = result.map((o: any) => ({
-          ...o,
-          items: o.order_items?.map((item: any) => ({
-            id: item.id,
-            product_id: item.product_id,
-            product_name: item.product?.name,
-            product_sku: item.product?.sku,
-            quantity: item.quantity,
-            unit_price: item.unit_price,
-          })) ?? []
-        }))
+        // Convert to standard format and deduplicate items by id
+        result = result.map((o: any) => {
+          const seenItems = new Set<string>()
+          const dedupedItems = (o.order_items ?? []).filter((item: any) => {
+            if (!item.id || seenItems.has(item.id)) return false
+            seenItems.add(item.id)
+            return true
+          })
+          return {
+            ...o,
+            items: dedupedItems.map((item: any) => ({
+              id: item.id,
+              product_id: item.product_id,
+              product_name: item.product?.name,
+              product_sku: item.product?.sku,
+              quantity: item.quantity,
+              unit_price: item.unit_price,
+            }))
+          }
+        })
+        // Deduplicate orders by id
+        const seenOrders = new Set<string>()
+        result = result.filter((o: any) => {
+          if (seenOrders.has(o.id)) return false
+          seenOrders.add(o.id)
+          return true
+        })
 
         // Apply client search
         if (search) {

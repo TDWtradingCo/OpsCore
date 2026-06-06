@@ -75,7 +75,12 @@ export function PurchaseDetailPage() {
         .select('*, product:products(name, sku)')
         .eq('purchase_id', id!)
       if (error) throw error
-      return data
+      const seen = new Set<string>()
+      return (data ?? []).filter(li => {
+        if (seen.has(li.id)) return false
+        seen.add(li.id)
+        return true
+      })
     },
     enabled: !!id,
   })
@@ -1164,7 +1169,7 @@ function AddLineItemForm({
   const [productId, setProductId] = useState('')
   const [quantity, setQuantity] = useState('')
   const [unitCost, setUnitCost] = useState('')
-  const [taxPercent, setTaxPercent] = useState('0')
+  const [taxPercent, setTaxPercent] = useState('13')
   const [taxAmount, setTaxAmount] = useState('0')
   const [taxRecoverability, setTaxRecoverability] = useState<'recoverable' | 'non_recoverable'>('recoverable')
   const [productSearchOpen, setProductSearchOpen] = useState(false)

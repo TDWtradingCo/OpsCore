@@ -344,7 +344,8 @@ export function PurchasesPage() {
           ''
 
         const taxPercentRaw = String(taxPercentRawCandidate).replace(/[$,\s%]/g, '')
-        let taxPercent = parseFloat(taxPercentRaw || '0') || 0
+        const taxPercentProvided = taxPercentRaw.trim() !== ''
+        let taxPercent = taxPercentProvided ? (parseFloat(taxPercentRaw) || 0) : 0
 
         // Tax Amount (can calculate taxPercent if missing)
         const taxAmountRawCandidate =
@@ -358,6 +359,10 @@ export function PurchasesPage() {
         // If tax percent is not specified, but tax amount is, compute the percent
         if (taxPercent === 0 && taxAmountVal > 0 && quantity > 0 && unitCost > 0) {
           taxPercent = parseFloat(((taxAmountVal / (quantity * unitCost)) * 100).toFixed(4))
+        }
+        // If neither tax_percent nor tax_amount provided, default to 13%
+        if (!taxPercentProvided && taxAmountVal === 0) {
+          taxPercent = 13
         }
 
         const taxRecoverability = (row.tax_type ?? row.tax_recoverability)?.trim() || 'recoverable'
