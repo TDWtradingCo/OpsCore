@@ -441,7 +441,7 @@ export function DashboardPage() {
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
           <p className="text-sm font-medium text-muted-foreground mb-1">Welcome back</p>
-          <h1 className="text-3xl font-bold tracking-tight">TDW Inventory Tracker</h1>
+          <h1 className="text-5xl font-black tracking-tight">OpsCore</h1>
         </div>
         <div className="flex gap-2">
           <Link to="/products">

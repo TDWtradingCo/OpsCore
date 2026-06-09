@@ -48,9 +48,8 @@ export function LoginPage() {
             <div className="flex items-center justify-center h-11 w-11 rounded-xl bg-primary shadow-glow">
               <CircleDot className="h-6 w-6 text-white" />
             </div>
-            <h1 className="text-2xl font-bold tracking-tight">TDW</h1>
+            <h1 className="text-5xl font-black tracking-tight">OpsCore</h1>
           </div>
-          <p className="text-sm text-muted-foreground">Inventory Tracker</p>
         </div>
         <Card className="shadow-elevated border-0">
           <CardHeader className="text-center pb-4">

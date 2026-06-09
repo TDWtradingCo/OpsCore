@@ -246,6 +246,9 @@ export function PurchasesPage() {
       const productBySku = new Map<string, string>(
         productData?.flatMap((p: any) => p.sku ? [[p.sku.toLowerCase() as string, p.id as string]] : []) ?? []
       )
+      const productById = new Map<string, string>(
+        productData?.map((p: any) => [p.id as string, p.id as string]) ?? []
+      )
       const productByName = new Map<string, string>(
         productData?.flatMap((p: any) => p.name ? [[p.name.toLowerCase() as string, p.id as string]] : []) ?? []
       )
@@ -282,12 +285,29 @@ export function PurchasesPage() {
             return `${year}-${month}-${d!.padStart(2, '0')}`
           }
         }
+        const monthNameDate = s.match(/^([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})$/)
+        if (monthNameDate) {
+          const [, mon, d, y] = monthNameDate
+          const month = monthMap[mon!.slice(0, 3).toLowerCase()]
+          if (month) return `${y}-${month}-${d!.padStart(2, '0')}`
+        }
         return s
+      }
+
+      function resolveProductId(line: ParsedLine): string | undefined {
+        const raw = line.productIdRaw?.trim()
+        if (raw) {
+          const lower = raw.toLowerCase()
+          return productByCode.get(lower) ?? productBySku.get(lower) ?? productByName.get(lower) ?? productById.get(raw)
+        }
+        return line.itemName ? productByName.get(line.itemName.toLowerCase()) : undefined
       }
 
       // ── Parse & group rows by invoice ────────────────────────────────────
       interface ParsedLine {
         productIdRaw: string | null
+        itemName: string
+        comments: string
         quantity: number
         unitCost: number
         taxPercent: number
@@ -310,9 +330,9 @@ export function PurchasesPage() {
         const row = rows[i]
         if (!row) continue
 
-        const invoiceNumber = row.invoice_number?.trim()
-        const supplierName  = row.supplier_name?.trim()
-        const invoiceDate   = normaliseDateToISO(row.invoice_date ?? '')
+        const invoiceNumber = (row.invoice_number ?? row.invoice ?? '').trim()
+        const supplierName  = (row.supplier_name ?? row.vendor ?? row.vendor_supplier ?? row.supplier ?? '').trim()
+        const invoiceDate   = normaliseDateToISO(row.invoice_date ?? row.date ?? '')
 
         if (!invoiceNumber) { skippedRows.push(`Row ${i + 2}: missing invoice number`); continue }
         if (!supplierName)  { skippedRows.push(`Row ${i + 2}: missing supplier name`); continue }
@@ -323,10 +343,10 @@ export function PurchasesPage() {
         const quantity = parseInt(qtyRaw, 10)
 
         // Support unit cost and amount fields
-        const unitCostRaw = (row.unit_cost ?? '').replace(/[$,\s]/g, '')
+        const unitCostRaw = (row.unit_cost ?? row.cost ?? '').replace(/[$,\s]/g, '')
         let unitCost = parseFloat(unitCostRaw)
 
-        const amountRaw = (row.amount ?? row.subtotal ?? '').replace(/[$,\s]/g, '')
+        const amountRaw = (row.amount ?? row.subtotal ?? row.total_cost ?? '').replace(/[$,\s]/g, '')
         const amount = parseFloat(amountRaw)
 
         // If unit_cost is not provided but amount (subtotal) and quantity are, calculate unit_cost
@@ -350,11 +370,17 @@ export function PurchasesPage() {
         // Tax Amount (can calculate taxPercent if missing)
         const taxAmountRawCandidate =
           row['tax_amount'] ??
+          row['total_tax'] ??
           row['tax'] ??
           row['taxamount'] ??
           ''
         const taxAmountRaw = String(taxAmountRawCandidate).replace(/[$,\s]/g, '')
-        const taxAmountVal = parseFloat(taxAmountRaw || '0') || 0
+        let taxAmountVal = parseFloat(taxAmountRaw || '0') || 0
+        const unitTaxRaw = String(row['unit_tax'] ?? row['hst'] ?? row['tax_unit'] ?? '').replace(/[$,\s]/g, '')
+        const unitTaxVal = parseFloat(unitTaxRaw || '0') || 0
+        if (taxAmountVal === 0 && unitTaxVal > 0 && quantity > 0) {
+          taxAmountVal = parseFloat((unitTaxVal * quantity).toFixed(2))
+        }
 
         // If tax percent is not specified, but tax amount is, compute the percent
         if (taxPercent === 0 && taxAmountVal > 0 && quantity > 0 && unitCost > 0) {
@@ -377,13 +403,15 @@ export function PurchasesPage() {
           continue
         }
 
-        const productIdRaw = row.product_id?.trim() || null
+        const productIdRaw = (row.product_id ?? row.product_code ?? row.sku ?? '').trim() || null
+        const itemName = (row.item_name ?? row.product_name ?? row.name ?? '').trim()
+        const comments = (row.comments ?? row.notes ?? '').trim()
         const groupKey = `${invoiceNumber}|||${supplierName.toLowerCase()}`
         if (!invoiceMap.has(groupKey)) {
           invoiceMap.set(groupKey, { invoiceNumber, supplierName, invoiceDate, lines: [] })
         }
         invoiceMap.get(groupKey)!.lines.push({
-          productIdRaw, quantity, unitCost, taxPercent, taxAmount: taxAmountVal, taxRecoverability, rowIndex: i + 2, warehouseName,
+          productIdRaw, itemName, comments, quantity, unitCost, taxPercent, taxAmount: taxAmountVal, taxRecoverability, rowIndex: i + 2, warehouseName,
         })
       }
 
@@ -571,6 +599,40 @@ export function PurchasesPage() {
         throw new Error('No warehouse locations found in the system. Please create a warehouse location first.')
       }
 
+      // ── BATCH: Auto-create missing products so source rows are not dropped ─
+      const newProductLines = new Map<string, ParsedLine>()
+      for (const [, group] of invoiceMap) {
+        for (const line of group.lines) {
+          if (resolveProductId(line)) continue
+          const productKey = line.productIdRaw?.toLowerCase() || `source-row-${line.rowIndex}`
+          if (!newProductLines.has(productKey)) newProductLines.set(productKey, line)
+        }
+      }
+
+      if (newProductLines.size > 0) {
+        const { data: createdProducts, error: productErr } = await supabase
+          .from('products')
+          .insert([...newProductLines.values()].map(line => {
+            const rawCode = line.productIdRaw?.trim()
+            const itemName = line.itemName || rawCode || `Imported purchase item row ${line.rowIndex}`
+            const sku = rawCode || `SRC-PUR-${line.rowIndex}`
+            return {
+              name: itemName,
+              sku,
+              ...(rawCode && /^PRD-/i.test(rawCode) ? { product_code: rawCode } : {}),
+              status: 'active',
+            }
+          }))
+          .select('id, sku, product_code, name')
+        if (productErr) throw productErr
+        for (const product of createdProducts ?? []) {
+          productById.set(product.id, product.id)
+          if (product.product_code) productByCode.set(product.product_code.toLowerCase(), product.id)
+          if (product.sku) productBySku.set(product.sku.toLowerCase(), product.id)
+          if (product.name) productByName.set(product.name.toLowerCase(), product.id)
+        }
+      }
+
       // ── BATCH: Create new purchases + update existing headers in parallel ──
       const errors: string[] = []
       let errorCount = 0
@@ -650,11 +712,7 @@ export function PurchasesPage() {
 
         let skippedLinesCount = 0
         for (const line of group.lines) {
-          const matchedProductId =
-            (line.productIdRaw ? productByCode.get(line.productIdRaw.toLowerCase()) : undefined) ??
-            (line.productIdRaw ? productBySku.get(line.productIdRaw.toLowerCase()) : undefined) ??
-            (line.productIdRaw ? productByName.get(line.productIdRaw.toLowerCase()) : undefined) ??
-            (line.productIdRaw ? productData?.find((p: any) => p.id === line.productIdRaw)?.id : undefined)
+          const matchedProductId = resolveProductId(line)
 
           if (!matchedProductId) { skippedLinesCount++; continue }
 
@@ -964,26 +1022,36 @@ export function PurchasesPage() {
       supplier_name: 'Global Electronics Supplier',
       invoice_date: '05/15/2026',
       product_id: 'PRD-1001',
+      item_name: 'Wireless Headphones',
       quantity: '500',
       unit_cost: '12.50',
+      unit_tax: '1.63',
       amount: '6250.00',
+      total_cost: '6250.00',
       tax_percent: '10',
       tax_amount: '625.00',
+      total_tax: '625.00',
       tax_recoverability: 'recoverable',
       warehouse_name: 'WFS CA',
+      comments: 'Original sheet comments',
       notes: 'Fill warehouse_name to auto-complete and update inventory',
     }, {
       invoice_number: 'INV-2026-002',
       supplier_name: 'Premium Parts Inc',
       invoice_date: '05/16/2026',
       product_id: 'PRD-1005',
+      item_name: 'USB-C Cable',
       quantity: '250',
       unit_cost: '45.75',
+      unit_tax: '5.95',
       amount: '11437.50',
+      total_cost: '11437.50',
       tax_percent: '8',
       tax_amount: '915.00',
+      total_tax: '915.00',
       tax_recoverability: 'recoverable',
       warehouse_name: 'WFS CA',
+      comments: 'Standard order',
       notes: 'Standard order',
     }]
     exportToCSV(templateData, 'purchases-template', [
@@ -991,13 +1059,18 @@ export function PurchasesPage() {
       { key: 'supplier_name', header: 'Supplier Name (must exist) *' },
       { key: 'invoice_date', header: 'Invoice Date (MM/DD/YYYY) *' },
       { key: 'product_id', header: 'Product ID / SKU / Code *' },
+      { key: 'item_name', header: 'Item Name' },
       { key: 'quantity', header: 'Quantity *' },
       { key: 'unit_cost', header: 'Unit Cost *' },
+      { key: 'unit_tax', header: 'HST / Unit Tax' },
       { key: 'amount', header: 'Amount' },
+      { key: 'total_cost', header: 'Total Cost' },
       { key: 'tax_percent', header: 'Tax Percentage (%)' },
       { key: 'tax_amount', header: 'Tax Amount' },
+      { key: 'total_tax', header: 'Total Tax' },
       { key: 'tax_recoverability', header: 'Tax Type (recoverable/non_recoverable)' },
       { key: 'warehouse_name', header: 'Warehouse Name (fills inventory on import)' },
+      { key: 'comments', header: 'Comments' },
       { key: 'notes', header: 'Notes' },
     ])
     toast.success('Purchases template downloaded')
