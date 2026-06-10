@@ -19,6 +19,45 @@ import { formatCurrency } from '@/lib/utils'
 import { toast } from 'sonner'
 import { logDashboardActivity } from '@/lib/audit'
 
+function toPounds(weight: number | null | undefined, unit: string | null | undefined): number {
+  const value = Number(weight)
+  if (!Number.isFinite(value) || value <= 0) return 0
+
+  if (unit === 'kg') return value * 2.2046226218
+  if (unit === 'oz') return value / 16
+  if (unit === 'g') return value * 0.0022046226218
+  return value
+}
+
+function getUnitWeightLb(item: any): number {
+  return toPounds(item.product?.weight, item.product?.weight_unit)
+}
+
+function getLineWeightLb(item: any): number {
+  return getUnitWeightLb(item) * item.quantity
+}
+
+function canAllocateByWeight(items: any[] | undefined): boolean {
+  return !!items?.length && items.every((item) => getUnitWeightLb(item) > 0)
+}
+
+function getAdditionalCostAllocation(item: any, items: any[] | undefined, totalAdditional: number): number {
+  if (!items?.length || totalAdditional <= 0) return 0
+
+  if (canAllocateByWeight(items)) {
+    const totalWeight = items.reduce((sum, lineItem) => sum + getLineWeightLb(lineItem), 0)
+    if (totalWeight > 0) return totalAdditional * (getLineWeightLb(item) / totalWeight)
+  }
+
+  const totalQty = items.reduce((sum, lineItem) => sum + lineItem.quantity, 0)
+  return totalQty > 0 ? totalAdditional * (item.quantity / totalQty) : 0
+}
+
+function getAdditionalCostPerUnit(item: any, items: any[] | undefined, totalAdditional: number): number {
+  if (!item.quantity) return 0
+  return getAdditionalCostAllocation(item, items, totalAdditional) / item.quantity
+}
+
 export function PurchaseDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -72,7 +111,7 @@ export function PurchaseDetailPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('purchase_line_items')
-        .select('*, product:products(name, sku)')
+        .select('*, product:products(name, sku, weight, weight_unit)')
         .eq('purchase_id', id!)
       if (error) throw error
       const seen = new Set<string>()
@@ -117,38 +156,13 @@ export function PurchaseDetailPage() {
         throw new Error('Purchase must have at least one line item')
       }
 
-      // ── LANDED COST CALCULATION (WEIGHT-BASED) ──
-      // Landed Cost = (Unit Cost + Portion of Additional Costs) / Quantity
-      // 
-      // Step 1: Calculate total quantity across all line items
-      // Step 2: For each line item, calculate its weight as a % of total quantity
-      // Step 3: Allocate additional costs proportionally to each line item
-      //         Additional Cost Allocation = Total Additional Costs × (Line Item Quantity / Total Quantity)
-      // Step 4: Calculate total landed unit cost
-      //         Landed Unit Cost = (Unit Cost × Quantity + Allocated Additional Cost) / Quantity
-      //
-      // Example:
-      // - Line Item 1: 100 units @ $10 = $1,000 (54.05% of 185 total qty)
-      // - Line Item 2: 20 units @ $30 = $600 (10.81% of 185 total qty)
-      // - Line Item 3: 65 units @ $15 = $975 (35.14% of 185 total qty)
-      // - Additional Costs: $300 (customs + shipping)
-      // - Line Item 1 allocated: $300 × (100/185) = $162.16
-      // - Line Item 2 allocated: $300 × (20/185) = $32.43
-      // - Line Item 3 allocated: $300 × (65/185) = $105.41
-      // - Line Item 1 landed unit cost = ($1,000 + $162.16) / 100 = $11.62
-
-      const totalQty = lineItems.reduce((sum, li) => sum + li.quantity, 0)
+      // Unit landed cost = unit cost + allocated additional cost per unit.
+      // When every product has a unit weight, additional costs are allocated by shipment weight.
       const totalAddCosts = additionalCosts?.reduce((sum, c) => sum + c.amount, 0) ?? 0
 
       // Update each line item with calculated landed cost
       for (const li of lineItems) {
-        const weightPercent = totalQty > 0 ? li.quantity / totalQty : 0
-        
-        // Distribute additional costs proportionally based on quantity weight
-        const allocatedCosts = totalAddCosts * weightPercent
-        
-        // Landed unit cost = (subtotal + allocated costs) / quantity
-        const landedUnitCost = (li.unit_cost * li.quantity + allocatedCosts) / li.quantity
+        const landedUnitCost = li.unit_cost + getAdditionalCostPerUnit(li, lineItems, totalAddCosts)
 
         await supabase
           .from('purchase_line_items')
@@ -447,25 +461,24 @@ export function PurchaseDetailPage() {
   const totalTax = lineItems?.reduce((sum, li) => sum + li.tax_amount, 0) ?? 0
   const totalAdditional = additionalCosts?.reduce((sum, c) => sum + c.amount, 0) ?? 0
   
-  // Weight-based landed cost calculations
-  const totalQuantity = lineItems?.reduce((sum, li) => sum + li.quantity, 0) ?? 0
+  const totalShipmentWeightLb = lineItems?.reduce((sum, li) => sum + getLineWeightLb(li), 0) ?? 0
+  const usesWeightAllocation = canAllocateByWeight(lineItems) && totalShipmentWeightLb > 0
+  const shippingRatePerLb = usesWeightAllocation ? totalAdditional / totalShipmentWeightLb : 0
   
-  // Function to get weight % for a line item based on quantity
-  const getWeightPercent = (itemQty: number) => {
-    if (totalQuantity === 0) return 0
-    return (itemQty / totalQuantity) * 100
+  const getWeightPercent = (item: any) => {
+    if (!usesWeightAllocation || totalShipmentWeightLb === 0) return 0
+    return (getLineWeightLb(item) / totalShipmentWeightLb) * 100
   }
   
   // Function to get allocated additional cost for a line item
-  const getAllocatedAdditionalCost = (itemQty: number) => {
-    if (totalQuantity === 0) return 0
-    return totalAdditional * (itemQty / totalQuantity)
+  const getAllocatedAdditionalCost = (item: any) => {
+    return getAdditionalCostAllocation(item, lineItems, totalAdditional)
   }
   
   // Function to get total landed cost for a line item (including allocated costs)
   const getLineItemLandedCost = (item: any) => {
     const baseLineTotal = item.unit_cost * item.quantity
-    const allocated = getAllocatedAdditionalCost(item.quantity)
+    const allocated = getAllocatedAdditionalCost(item)
     return baseLineTotal + item.tax_amount + allocated
   }
   
@@ -476,7 +489,7 @@ export function PurchaseDetailPage() {
   const getUnitLandedCost = (item: any) => {
     if (item.landed_unit_cost) return item.landed_unit_cost
     if (!item.quantity) return 0
-    return getLineItemLandedCost(item) / item.quantity
+    return item.unit_cost + getAdditionalCostPerUnit(item, lineItems, totalAdditional)
   }
 
   return (
@@ -740,6 +753,9 @@ export function PurchaseDetailPage() {
           <CardContent>
             <div className="text-2xl font-bold">{formatCurrency(totalLandedCost)}</div>
             <p className="text-xs text-muted-foreground mt-1">{formatCurrency(subtotal + totalTax + totalAdditional)}</p>
+            {usesWeightAllocation && totalAdditional > 0 && (
+              <p className="text-xs text-muted-foreground mt-1">Additional cost rate: {formatCurrency(shippingRatePerLb)}/lb</p>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -810,10 +826,10 @@ export function PurchaseDetailPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right text-sm">
-                      {getWeightPercent(item.quantity).toFixed(2)}%
+                      {usesWeightAllocation ? `${getWeightPercent(item).toFixed(2)}%` : '—'}
                     </TableCell>
                     <TableCell className="text-right">
-                      {formatCurrency(getAllocatedAdditionalCost(item.quantity))}
+                      {formatCurrency(getAllocatedAdditionalCost(item))}
                     </TableCell>
                     <TableCell className="text-right font-medium text-primary">
                       {formatCurrency(getUnitLandedCost(item))}
