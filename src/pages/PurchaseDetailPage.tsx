@@ -1470,6 +1470,47 @@ function AllocationSection({
     locations?.find((location) => location.name.toLowerCase() === 'local storage') ??
     locations?.[0]
 
+  async function moveInventoryQuantity(fromLocationId: string, toLocationId: string, qty: number) {
+    if (fromLocationId === toLocationId || qty <= 0) return
+
+    const { data: sourceInventory, error: sourceError } = await supabase
+      .from('inventory')
+      .select('id, quantity')
+      .eq('product_id', lineItem.product_id)
+      .eq('warehouse_location_id', fromLocationId)
+      .maybeSingle()
+    if (sourceError) throw sourceError
+
+    if (sourceInventory) {
+      const nextSourceQty = Math.max(0, sourceInventory.quantity - qty)
+      const { error } = nextSourceQty === 0
+        ? await supabase.from('inventory').delete().eq('id', sourceInventory.id)
+        : await supabase.from('inventory').update({ quantity: nextSourceQty }).eq('id', sourceInventory.id)
+      if (error) throw error
+    }
+
+    const { data: destinationInventory, error: destinationError } = await supabase
+      .from('inventory')
+      .select('id, quantity')
+      .eq('product_id', lineItem.product_id)
+      .eq('warehouse_location_id', toLocationId)
+      .maybeSingle()
+    if (destinationError) throw destinationError
+
+    if (destinationInventory) {
+      const { error } = await supabase
+        .from('inventory')
+        .update({ quantity: destinationInventory.quantity + qty })
+        .eq('id', destinationInventory.id)
+      if (error) throw error
+    } else {
+      const { error } = await supabase
+        .from('inventory')
+        .insert({ product_id: lineItem.product_id, warehouse_location_id: toLocationId, quantity: qty })
+      if (error) throw error
+    }
+  }
+
   const addAllocation = useMutation({
     mutationFn: async () => {
       const qty = parseInt(quantity)
@@ -1556,6 +1597,40 @@ function AllocationSection({
     onError: (error) => toast.error(error.message),
   })
 
+  const updateAllocationLocation = useMutation({
+    mutationFn: async ({ allocationId, fromLocationId, toLocationId, qty }: { allocationId: string; fromLocationId: string; toLocationId: string; qty: number }) => {
+      if (fromLocationId === toLocationId) return
+
+      const { error } = await supabase
+        .from('purchase_allocations')
+        .update({ warehouse_location_id: toLocationId })
+        .eq('id', allocationId)
+      if (error) throw error
+
+      await moveInventoryQuantity(fromLocationId, toLocationId, qty)
+    },
+    onSuccess: async () => {
+      queryClient.invalidateQueries({ queryKey: ['allocations', lineItem.id] })
+      queryClient.invalidateQueries({ queryKey: ['purchase-allocations', purchaseId] })
+      queryClient.invalidateQueries({ queryKey: ['inventory'] })
+      queryClient.invalidateQueries({ queryKey: ['inventory-detail'] })
+      if (userId) {
+        await logDashboardActivity({
+          entityType: 'purchase_allocation',
+          action: 'update',
+          userId,
+          entityId: purchaseId,
+          description: `Moved warehouse allocation on invoice ${invoiceNumber}`,
+          metadata: {
+            product_name: lineItem.product?.name,
+          },
+        })
+      }
+      toast.success('Allocation location updated')
+    },
+    onError: (error) => toast.error(error.message),
+  })
+
   return (
     <div className="border rounded-md p-4 mb-4">
       <div className="flex items-start justify-between gap-3 mb-2">
@@ -1582,11 +1657,31 @@ function AllocationSection({
       </div>
 
       {existingAllocations && existingAllocations.length > 0 && (
-        <div className="mb-3 space-y-1">
+        <div className="mb-3 space-y-2">
           {existingAllocations.map((a: any) => (
-            <div key={a.id} className="text-sm flex justify-between">
-              <span>{a.warehouse_location?.name}</span>
-              <div className="inline-flex items-center gap-2">
+            <div key={a.id} className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+              <div className="w-full sm:max-w-xs">
+                <Select
+                  value={a.warehouse_location_id}
+                  onValueChange={(nextLocationId) => updateAllocationLocation.mutate({
+                    allocationId: a.id,
+                    fromLocationId: a.warehouse_location_id,
+                    toLocationId: nextLocationId,
+                    qty: a.quantity,
+                  })}
+                  disabled={updateAllocationLocation.isPending}
+                >
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="Warehouse" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {locations?.map((location) => (
+                      <SelectItem key={location.id} value={location.id}>{location.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="inline-flex items-center justify-end gap-2">
                 <span className="font-mono">{a.quantity}</span>
                 <Button
                   size="icon"
