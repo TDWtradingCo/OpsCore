@@ -1465,7 +1465,10 @@ function AllocationSection({
   })
 
   const allocatedQty = existingAllocations?.reduce((sum, a) => sum + a.quantity, 0) ?? 0
-  const remainingQty = lineItem.quantity - allocatedQty
+  const remainingQty = Math.max(0, lineItem.quantity - allocatedQty)
+  const defaultLocation =
+    locations?.find((location) => location.name.toLowerCase() === 'local storage') ??
+    locations?.[0]
 
   const addAllocation = useMutation({
     mutationFn: async () => {
@@ -1497,6 +1500,40 @@ function AllocationSection({
     onError: (error) => toast.error(error.message),
   })
 
+  const allocateFully = useMutation({
+    mutationFn: async () => {
+      if (!defaultLocation) throw new Error('No warehouse location available')
+      if (remainingQty <= 0) throw new Error('This line item is already fully allocated')
+
+      const { error } = await supabase.from('purchase_allocations').insert({
+        purchase_line_item_id: lineItem.id,
+        warehouse_location_id: defaultLocation.id,
+        quantity: remainingQty,
+      })
+      if (error) throw error
+    },
+    onSuccess: async () => {
+      queryClient.invalidateQueries({ queryKey: ['allocations', lineItem.id] })
+      queryClient.invalidateQueries({ queryKey: ['purchase-allocations', purchaseId] })
+      if (userId) {
+        await logDashboardActivity({
+          entityType: 'purchase_allocation',
+          action: 'create',
+          userId,
+          entityId: purchaseId,
+          description: `Fully allocated line item to ${defaultLocation?.name ?? 'warehouse'} on invoice ${invoiceNumber}`,
+          metadata: {
+            product_name: lineItem.product?.name,
+            warehouse_location_id: defaultLocation?.id,
+            quantity: remainingQty,
+          },
+        })
+      }
+      toast.success('Line item fully allocated')
+    },
+    onError: (error) => toast.error(error.message),
+  })
+
   const deleteAllocation = useMutation({
     mutationFn: async (allocationId: string) => {
       const { error } = await supabase.from('purchase_allocations').delete().eq('id', allocationId)
@@ -1521,14 +1558,27 @@ function AllocationSection({
 
   return (
     <div className="border rounded-md p-4 mb-4">
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-start justify-between gap-3 mb-2">
         <div>
           <span className="font-medium">{lineItem.product?.name}</span>
           <span className="text-sm text-muted-foreground ml-2">
             ({allocatedQty}/{lineItem.quantity} allocated)
           </span>
         </div>
-        {remainingQty === 0 && <Badge variant="success">Fully Allocated</Badge>}
+        <div className="shrink-0">
+          {remainingQty === 0 ? (
+            <Badge variant="success">Fully Allocated</Badge>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => allocateFully.mutate()}
+              disabled={allocateFully.isPending || !defaultLocation}
+            >
+              {allocateFully.isPending ? 'Allocating...' : 'Allocate fully'}
+            </Button>
+          )}
+        </div>
       </div>
 
       {existingAllocations && existingAllocations.length > 0 && (
