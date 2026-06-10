@@ -58,6 +58,15 @@ function getAdditionalCostPerUnit(item: any, items: any[] | undefined, totalAddi
   return getAdditionalCostAllocation(item, items, totalAdditional) / item.quantity
 }
 
+function getTaxCostPerUnit(item: any): number {
+  if (!item.quantity) return 0
+  return (Number(item.tax_amount) || 0) / item.quantity
+}
+
+function getLandedCostPerUnit(item: any, items: any[] | undefined, totalAdditional: number): number {
+  return (Number(item.unit_cost) || 0) + getTaxCostPerUnit(item) + getAdditionalCostPerUnit(item, items, totalAdditional)
+}
+
 export function PurchaseDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -156,13 +165,13 @@ export function PurchaseDetailPage() {
         throw new Error('Purchase must have at least one line item')
       }
 
-      // Unit landed cost = unit cost + allocated additional cost per unit.
+      // Unit landed cost = unit cost + tax per unit + allocated additional cost per unit.
       // When every product has a unit weight, additional costs are allocated by shipment weight.
       const totalAddCosts = additionalCosts?.reduce((sum, c) => sum + c.amount, 0) ?? 0
 
       // Update each line item with calculated landed cost
       for (const li of lineItems) {
-        const landedUnitCost = li.unit_cost + getAdditionalCostPerUnit(li, lineItems, totalAddCosts)
+        const landedUnitCost = getLandedCostPerUnit(li, lineItems, totalAddCosts)
 
         await supabase
           .from('purchase_line_items')
@@ -327,9 +336,13 @@ export function PurchaseDetailPage() {
   const updateLineItem = useMutation({
     mutationFn: async ({ itemId, quantity, unitCost, taxPercent, taxRecoverability, oldQuantity, oldUnitCost, oldTaxPercent, oldTaxRecoverability }: { itemId: string; quantity: number; unitCost: number; taxPercent: number; taxRecoverability: 'recoverable' | 'non_recoverable'; oldQuantity: number; oldUnitCost: number; oldTaxPercent: number; oldTaxRecoverability: string }) => {
       const taxAmount = Number(((quantity * unitCost * taxPercent) / 100).toFixed(2))
+      const totalAddCosts = additionalCosts?.reduce((sum, cost) => sum + cost.amount, 0) ?? 0
+      const updatedItem = { ...editingLineItem, quantity, unit_cost: unitCost, tax_amount: taxAmount }
+      const updatedLineItems = (lineItems ?? []).map((item) => item.id === itemId ? updatedItem : item)
+      const landedUnitCost = getLandedCostPerUnit(updatedItem, updatedLineItems, totalAddCosts)
       const { error } = await supabase
         .from('purchase_line_items')
-        .update({ quantity, unit_cost: unitCost, tax_percent: taxPercent, tax_amount: taxAmount, tax_recoverability: taxRecoverability })
+        .update({ quantity, unit_cost: unitCost, tax_percent: taxPercent, tax_amount: taxAmount, tax_recoverability: taxRecoverability, landed_unit_cost: landedUnitCost })
         .eq('id', itemId)
       if (error) throw error
       return { oldQuantity, oldUnitCost, oldTaxPercent, oldTaxRecoverability }
@@ -477,9 +490,7 @@ export function PurchaseDetailPage() {
   
   // Function to get total landed cost for a line item (including allocated costs)
   const getLineItemLandedCost = (item: any) => {
-    const baseLineTotal = item.unit_cost * item.quantity
-    const allocated = getAllocatedAdditionalCost(item)
-    return baseLineTotal + item.tax_amount + allocated
+    return getLandedCostPerUnit(item, lineItems, totalAdditional) * item.quantity
   }
   
   // Total landed cost across all items
@@ -489,7 +500,7 @@ export function PurchaseDetailPage() {
   const getUnitLandedCost = (item: any) => {
     if (item.landed_unit_cost) return item.landed_unit_cost
     if (!item.quantity) return 0
-    return item.unit_cost + getAdditionalCostPerUnit(item, lineItems, totalAdditional)
+    return getLandedCostPerUnit(item, lineItems, totalAdditional)
   }
 
   return (

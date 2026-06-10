@@ -725,7 +725,7 @@ export function PurchasesPage() {
             product_id: matchedProductId,
             quantity: line.quantity,
             unit_cost: line.unitCost,
-            landed_unit_cost: line.unitCost,
+            landed_unit_cost: line.unitCost + (taxAmount / line.quantity),
             tax_percent: line.taxPercent,
             tax_amount: taxAmount,
             tax_recoverability: line.taxRecoverability,
@@ -916,7 +916,7 @@ export function PurchasesPage() {
         try {
           const { data: lineItems } = await supabase
             .from('purchase_line_items')
-            .select('id, product_id, quantity, unit_cost')
+            .select('id, product_id, quantity, unit_cost, tax_amount')
             .eq('purchase_id', purchase.id)
 
           if (!lineItems?.length) {
@@ -956,7 +956,7 @@ export function PurchasesPage() {
             }
 
             await supabase.from('purchase_line_items')
-              .update({ landed_unit_cost: li.unit_cost })
+              .update({ landed_unit_cost: li.unit_cost + ((li.tax_amount ?? 0) / li.quantity) })
               .eq('id', li.id)
           }
 

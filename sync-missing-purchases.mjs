@@ -695,7 +695,7 @@ async function insertMissingLines(state, plan) {
     tax_percent: item.line.taxPercent,
     tax_amount: item.line.taxAmount,
     tax_recoverability: item.line.taxRecoverability,
-    landed_unit_cost: item.line.unitCost,
+    landed_unit_cost: item.line.unitCost + (item.line.taxAmount / item.line.quantity),
   }))
 
   const { data: insertedLineItems, error: lineError } = await supabase
