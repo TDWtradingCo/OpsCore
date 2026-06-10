@@ -12,6 +12,11 @@ interface SearchableSelectProps {
   disabled?: boolean
 }
 
+function compactLabel(label: string, maxLength = 48) {
+  if (label.length <= maxLength) return label
+  return `${label.slice(0, maxLength - 3).trimEnd()}...`
+}
+
 export function SearchableSelect({
   value,
   onValueChange,
@@ -31,6 +36,7 @@ export function SearchableSelect({
   )
 
   const selectedLabel = options.find(opt => opt.value === value)?.label
+  const triggerLabel = selectedLabel ? compactLabel(selectedLabel) : placeholder
 
   const closeDropdown = () => {
     setOpen(false)
@@ -67,19 +73,20 @@ export function SearchableSelect({
   }, [open])
 
   return (
-    <div className="relative w-full">
+    <div className="relative w-full min-w-0">
       <Button
         ref={triggerRef}
         type="button"
         variant="outline"
         role="combobox"
         aria-expanded={open}
-        className="w-full justify-between"
+        className="flex w-full max-w-full min-w-0 justify-between overflow-hidden"
         onClick={toggleDropdown}
         disabled={disabled}
+        title={selectedLabel || placeholder}
       >
-        <span className="truncate text-left flex-1">
-          {selectedLabel || placeholder}
+        <span className="block min-w-0 flex-1 basis-0 overflow-hidden text-ellipsis whitespace-nowrap text-left">
+          {triggerLabel}
         </span>
         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
       </Button>
@@ -111,11 +118,12 @@ export function SearchableSelect({
                     closeDropdown()
                   }}
                   className={cn(
-                    'w-full px-2 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground flex items-center justify-between',
+                    'flex w-full max-w-full min-w-0 items-center justify-between gap-2 overflow-hidden px-2 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground',
                     value === option.value && 'bg-accent text-accent-foreground'
                   )}
+                  title={option.label}
                 >
-                  <span className="truncate">{option.label}</span>
+                  <span className="block min-w-0 flex-1 basis-0 overflow-hidden text-ellipsis whitespace-nowrap">{option.label}</span>
                   {value === option.value && <Check className="h-4 w-4 shrink-0" />}
                 </button>
               ))
