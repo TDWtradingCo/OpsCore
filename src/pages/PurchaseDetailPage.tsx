@@ -960,6 +960,7 @@ export function PurchaseDetailPage() {
                 lineItem={li}
                 purchaseId={id!}
                 invoiceNumber={purchase.invoice_number}
+                purchaseStatus={purchase.status}
                 userId={user?.id}
               />
             ))}
@@ -1434,11 +1435,13 @@ function AllocationSection({
   lineItem,
   purchaseId,
   invoiceNumber,
+  purchaseStatus,
   userId,
 }: {
   lineItem: any
   purchaseId: string
   invoiceNumber: string
+  purchaseStatus: string
   userId?: string
 }) {
   const [locationId, setLocationId] = useState('')
@@ -1469,46 +1472,43 @@ function AllocationSection({
   const defaultLocation =
     locations?.find((location) => location.name.toLowerCase() === 'local storage') ??
     locations?.[0]
+  const isCompletedPurchase = purchaseStatus === 'completed'
+
+  async function adjustInventoryQuantity(locationId: string, delta: number) {
+    if (!isCompletedPurchase || delta === 0) return
+
+    const { data: inventory, error: inventoryError } = await supabase
+      .from('inventory')
+      .select('id, quantity')
+      .eq('product_id', lineItem.product_id)
+      .eq('warehouse_location_id', locationId)
+      .maybeSingle()
+    if (inventoryError) throw inventoryError
+
+    if (inventory) {
+      const nextQty = inventory.quantity + delta
+      const { error } = nextQty <= 0
+        ? await supabase.from('inventory').delete().eq('id', inventory.id)
+        : await supabase.from('inventory').update({ quantity: nextQty }).eq('id', inventory.id)
+      if (error) throw error
+      return
+    }
+
+    if (delta > 0) {
+      const { error } = await supabase
+        .from('inventory')
+        .insert({ product_id: lineItem.product_id, warehouse_location_id: locationId, quantity: delta })
+      if (error) throw error
+      return
+    }
+
+    throw new Error('No inventory record found for this allocation location')
+  }
 
   async function moveInventoryQuantity(fromLocationId: string, toLocationId: string, qty: number) {
     if (fromLocationId === toLocationId || qty <= 0) return
-
-    const { data: sourceInventory, error: sourceError } = await supabase
-      .from('inventory')
-      .select('id, quantity')
-      .eq('product_id', lineItem.product_id)
-      .eq('warehouse_location_id', fromLocationId)
-      .maybeSingle()
-    if (sourceError) throw sourceError
-
-    if (sourceInventory) {
-      const nextSourceQty = Math.max(0, sourceInventory.quantity - qty)
-      const { error } = nextSourceQty === 0
-        ? await supabase.from('inventory').delete().eq('id', sourceInventory.id)
-        : await supabase.from('inventory').update({ quantity: nextSourceQty }).eq('id', sourceInventory.id)
-      if (error) throw error
-    }
-
-    const { data: destinationInventory, error: destinationError } = await supabase
-      .from('inventory')
-      .select('id, quantity')
-      .eq('product_id', lineItem.product_id)
-      .eq('warehouse_location_id', toLocationId)
-      .maybeSingle()
-    if (destinationError) throw destinationError
-
-    if (destinationInventory) {
-      const { error } = await supabase
-        .from('inventory')
-        .update({ quantity: destinationInventory.quantity + qty })
-        .eq('id', destinationInventory.id)
-      if (error) throw error
-    } else {
-      const { error } = await supabase
-        .from('inventory')
-        .insert({ product_id: lineItem.product_id, warehouse_location_id: toLocationId, quantity: qty })
-      if (error) throw error
-    }
+    await adjustInventoryQuantity(fromLocationId, -qty)
+    await adjustInventoryQuantity(toLocationId, qty)
   }
 
   const addAllocation = useMutation({
@@ -1576,13 +1576,16 @@ function AllocationSection({
   })
 
   const deleteAllocation = useMutation({
-    mutationFn: async (allocationId: string) => {
-      const { error } = await supabase.from('purchase_allocations').delete().eq('id', allocationId)
+    mutationFn: async (allocation: any) => {
+      const { error } = await supabase.from('purchase_allocations').delete().eq('id', allocation.id)
       if (error) throw error
+      await adjustInventoryQuantity(allocation.warehouse_location_id, -allocation.quantity)
     },
     onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['allocations', lineItem.id] })
       queryClient.invalidateQueries({ queryKey: ['purchase-allocations', purchaseId] })
+      queryClient.invalidateQueries({ queryKey: ['inventory'] })
+      queryClient.invalidateQueries({ queryKey: ['inventory-detail'] })
       if (userId) {
         await logDashboardActivity({
           entityType: 'purchase_allocation',
@@ -1593,6 +1596,46 @@ function AllocationSection({
         })
       }
       toast.success('Allocation removed')
+    },
+    onError: (error) => toast.error(error.message),
+  })
+
+  const updateAllocationQuantity = useMutation({
+    mutationFn: async ({ allocationId, locationId, previousQty, nextQty }: { allocationId: string; locationId: string; previousQty: number; nextQty: number }) => {
+      if (!Number.isFinite(nextQty) || nextQty <= 0) throw new Error('Allocation quantity must be greater than zero')
+
+      const allocatedExcludingThis = allocatedQty - previousQty
+      const maxForThisAllocation = lineItem.quantity - allocatedExcludingThis
+      if (nextQty > maxForThisAllocation) {
+        throw new Error(`Cannot allocate more than line item quantity (${lineItem.quantity})`)
+      }
+
+      const { error } = await supabase
+        .from('purchase_allocations')
+        .update({ quantity: nextQty })
+        .eq('id', allocationId)
+      if (error) throw error
+
+      await adjustInventoryQuantity(locationId, nextQty - previousQty)
+    },
+    onSuccess: async () => {
+      queryClient.invalidateQueries({ queryKey: ['allocations', lineItem.id] })
+      queryClient.invalidateQueries({ queryKey: ['purchase-allocations', purchaseId] })
+      queryClient.invalidateQueries({ queryKey: ['inventory'] })
+      queryClient.invalidateQueries({ queryKey: ['inventory-detail'] })
+      if (userId) {
+        await logDashboardActivity({
+          entityType: 'purchase_allocation',
+          action: 'update',
+          userId,
+          entityId: purchaseId,
+          description: `Updated warehouse allocation quantity on invoice ${invoiceNumber}`,
+          metadata: {
+            product_name: lineItem.product?.name,
+          },
+        })
+      }
+      toast.success('Allocation quantity updated')
     },
     onError: (error) => toast.error(error.message),
   })
@@ -1682,14 +1725,35 @@ function AllocationSection({
                 </Select>
               </div>
               <div className="inline-flex items-center justify-end gap-2">
-                <span className="font-mono">{a.quantity}</span>
+                <Input
+                  type="number"
+                  min="1"
+                  max={lineItem.quantity - (allocatedQty - a.quantity)}
+                  defaultValue={a.quantity}
+                  className="h-9 w-24 text-right font-mono"
+                  disabled={updateAllocationQuantity.isPending}
+                  onBlur={(event) => {
+                    const nextQty = parseInt(event.target.value, 10)
+                    if (nextQty === a.quantity) return
+                    updateAllocationQuantity.mutate({
+                      allocationId: a.id,
+                      locationId: a.warehouse_location_id,
+                      previousQty: a.quantity,
+                      nextQty,
+                    })
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') event.currentTarget.blur()
+                  }}
+                  onFocus={(event) => event.target.select()}
+                />
                 <Button
                   size="icon"
                   variant="ghost"
                   className="h-7 w-7 text-destructive"
                   onClick={() => {
                     if (!confirm('Delete this allocation?')) return
-                    deleteAllocation.mutate(a.id)
+                    deleteAllocation.mutate(a)
                   }}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
