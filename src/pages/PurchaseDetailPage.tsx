@@ -1530,6 +1530,7 @@ function AllocationSection({
   const addAllocation = useMutation({
     mutationFn: async () => {
       const qty = parseInt(quantity)
+      if (!Number.isFinite(qty) || qty <= 0) throw new Error('Allocation quantity must be greater than zero')
       if (qty > remainingQty) throw new Error(`Cannot allocate more than remaining (${remainingQty})`)
       const { error } = await supabase.from('purchase_allocations').insert({
         purchase_line_item_id: lineItem.id,
@@ -1537,10 +1538,13 @@ function AllocationSection({
         quantity: qty,
       })
       if (error) throw error
+      await adjustInventoryQuantity(locationId, qty)
     },
     onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['allocations', lineItem.id] })
       queryClient.invalidateQueries({ queryKey: ['purchase-allocations', purchaseId] })
+      queryClient.invalidateQueries({ queryKey: ['inventory'] })
+      queryClient.invalidateQueries({ queryKey: ['inventory-detail'] })
       setQuantity('')
       setLocationId('')
       if (userId) {
@@ -1568,10 +1572,13 @@ function AllocationSection({
         quantity: remainingQty,
       })
       if (error) throw error
+      await adjustInventoryQuantity(defaultLocation.id, remainingQty)
     },
     onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['allocations', lineItem.id] })
       queryClient.invalidateQueries({ queryKey: ['purchase-allocations', purchaseId] })
+      queryClient.invalidateQueries({ queryKey: ['inventory'] })
+      queryClient.invalidateQueries({ queryKey: ['inventory-detail'] })
       if (userId) {
         await logDashboardActivity({
           entityType: 'purchase_allocation',
