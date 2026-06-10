@@ -282,7 +282,7 @@ export function InventoryPage() {
                   <TableRow>
                     <TableHead>Product</TableHead>
                     <TableHead>SKU</TableHead>
-                    <TableHead className="text-right">Total Qty</TableHead>
+                    <TableHead className="text-right">Available Quantity</TableHead>
                     <TableHead>Locations</TableHead>
                     <TableHead className="text-right">Tax Paid</TableHead>
                   </TableRow>

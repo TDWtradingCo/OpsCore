@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react'
-import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
@@ -22,7 +21,6 @@ export function SearchableSelect({
 }: SearchableSelectProps) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
-  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({})
   const inputRef = useRef<HTMLInputElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -34,29 +32,24 @@ export function SearchableSelect({
 
   const selectedLabel = options.find(opt => opt.value === value)?.label
 
-  const updatePosition = () => {
-    if (triggerRef.current) {
-      const rect = triggerRef.current.getBoundingClientRect()
-      setDropdownStyle({
-        position: 'fixed',
-        top: rect.bottom + 4,
-        left: rect.left,
-        width: rect.width,
-        zIndex: 9999,
-      })
+  const closeDropdown = () => {
+    setOpen(false)
+    setSearch('')
+  }
+
+  const toggleDropdown = () => {
+    if (disabled) return
+    if (open) {
+      closeDropdown()
+      return
     }
+
+    setOpen(true)
   }
 
   useEffect(() => {
     if (!open) return
-    updatePosition()
-    inputRef.current?.focus()
-    window.addEventListener('scroll', updatePosition, true)
-    window.addEventListener('resize', updatePosition)
-    return () => {
-      window.removeEventListener('scroll', updatePosition, true)
-      window.removeEventListener('resize', updatePosition)
-    }
+    inputRef.current?.focus({ preventScroll: true })
   }, [open])
 
   useEffect(() => {
@@ -66,8 +59,7 @@ export function SearchableSelect({
         !triggerRef.current?.contains(e.target as Node) &&
         !dropdownRef.current?.contains(e.target as Node)
       ) {
-        setOpen(false)
-        setSearch('')
+        closeDropdown()
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -78,11 +70,12 @@ export function SearchableSelect({
     <div className="relative w-full">
       <Button
         ref={triggerRef}
+        type="button"
         variant="outline"
         role="combobox"
         aria-expanded={open}
         className="w-full justify-between"
-        onClick={() => !disabled && setOpen(prev => !prev)}
+        onClick={toggleDropdown}
         disabled={disabled}
       >
         <span className="truncate text-left flex-1">
@@ -91,11 +84,10 @@ export function SearchableSelect({
         <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
       </Button>
 
-      {open && !disabled && createPortal(
+      {open && !disabled && (
         <div
           ref={dropdownRef}
-          style={dropdownStyle}
-          className="border border-border rounded-md bg-white dark:bg-gray-950 shadow-lg"
+          className="absolute left-0 right-0 top-full z-[70] mt-1 overflow-hidden rounded-md border border-border bg-white shadow-lg dark:bg-gray-950"
         >
           <div className="p-2 border-b">
             <Input
@@ -106,17 +98,17 @@ export function SearchableSelect({
               className="h-8"
             />
           </div>
-          <div className="max-h-[200px] overflow-y-auto">
+          <div className="max-h-72 overflow-y-auto overscroll-contain" onWheel={(e) => e.stopPropagation()}>
             {filtered.length === 0 ? (
               <div className="p-2 text-sm text-muted-foreground text-center">No results found</div>
             ) : (
               filtered.map((option) => (
                 <button
+                  type="button"
                   key={option.value}
                   onClick={() => {
                     onValueChange(option.value)
-                    setOpen(false)
-                    setSearch('')
+                    closeDropdown()
                   }}
                   className={cn(
                     'w-full px-2 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground flex items-center justify-between',
@@ -129,8 +121,7 @@ export function SearchableSelect({
               ))
             )}
           </div>
-        </div>,
-        document.body
+        </div>
       )}
     </div>
   )
