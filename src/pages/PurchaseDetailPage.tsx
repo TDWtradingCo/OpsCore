@@ -1499,10 +1499,35 @@ function AllocationSection({
   const defaultLocation =
     locations?.find((location) => location.name.toLowerCase() === 'local storage') ??
     locations?.[0]
-  const isCompletedPurchase = purchaseStatus === 'completed'
+
+  async function isPurchaseCompletedForInventorySync() {
+    const { data, error } = await supabase
+      .from('purchases')
+      .select('status')
+      .eq('id', purchaseId)
+      .maybeSingle()
+    if (error) throw error
+    return (data?.status ?? purchaseStatus) === 'completed'
+  }
+
+  async function getLineAllocationTotals() {
+    const { data, error } = await supabase
+      .from('purchase_allocations')
+      .select('warehouse_location_id, quantity')
+      .eq('purchase_line_item_id', lineItem.id)
+    if (error) throw error
+
+    return (data ?? []).reduce((totals, allocation: any) => {
+      totals.set(
+        allocation.warehouse_location_id,
+        (totals.get(allocation.warehouse_location_id) ?? 0) + allocation.quantity
+      )
+      return totals
+    }, new Map<string, number>())
+  }
 
   async function adjustInventoryQuantity(locationId: string, delta: number) {
-    if (!isCompletedPurchase || delta === 0) return
+    if (delta === 0) return
 
     const { data: inventory, error: inventoryError } = await supabase
       .from('inventory')
@@ -1532,10 +1557,16 @@ function AllocationSection({
     throw new Error('No inventory record found for this allocation location')
   }
 
-  async function moveInventoryQuantity(fromLocationId: string, toLocationId: string, qty: number) {
-    if (fromLocationId === toLocationId || qty <= 0) return
-    await adjustInventoryQuantity(fromLocationId, -qty)
-    await adjustInventoryQuantity(toLocationId, qty)
+  async function syncInventoryToAllocationDelta(previousTotals: Map<string, number>, nextTotals: Map<string, number>) {
+    if (!(await isPurchaseCompletedForInventorySync())) return
+
+    const locationIds = new Set([...previousTotals.keys(), ...nextTotals.keys()])
+    for (const syncLocationId of locationIds) {
+      await adjustInventoryQuantity(
+        syncLocationId,
+        (nextTotals.get(syncLocationId) ?? 0) - (previousTotals.get(syncLocationId) ?? 0)
+      )
+    }
   }
 
   const addAllocation = useMutation({
@@ -1543,13 +1574,15 @@ function AllocationSection({
       const qty = parseInt(quantity)
       if (!Number.isFinite(qty) || qty <= 0) throw new Error('Allocation quantity must be greater than zero')
       if (qty > remainingQty) throw new Error(`Cannot allocate more than remaining (${remainingQty})`)
+      const previousTotals = await getLineAllocationTotals()
       const { error } = await supabase.from('purchase_allocations').insert({
         purchase_line_item_id: lineItem.id,
         warehouse_location_id: locationId,
         quantity: qty,
       })
       if (error) throw error
-      await adjustInventoryQuantity(locationId, qty)
+      const nextTotals = await getLineAllocationTotals()
+      await syncInventoryToAllocationDelta(previousTotals, nextTotals)
     },
     onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['allocations', lineItem.id] })
@@ -1577,13 +1610,15 @@ function AllocationSection({
       if (!defaultLocation) throw new Error('No warehouse location available')
       if (remainingQty <= 0) throw new Error('This line item is already fully allocated')
 
+      const previousTotals = await getLineAllocationTotals()
       const { error } = await supabase.from('purchase_allocations').insert({
         purchase_line_item_id: lineItem.id,
         warehouse_location_id: defaultLocation.id,
         quantity: remainingQty,
       })
       if (error) throw error
-      await adjustInventoryQuantity(defaultLocation.id, remainingQty)
+      const nextTotals = await getLineAllocationTotals()
+      await syncInventoryToAllocationDelta(previousTotals, nextTotals)
     },
     onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['allocations', lineItem.id] })
@@ -1611,9 +1646,11 @@ function AllocationSection({
 
   const deleteAllocation = useMutation({
     mutationFn: async (allocation: any) => {
+      const previousTotals = await getLineAllocationTotals()
       const { error } = await supabase.from('purchase_allocations').delete().eq('id', allocation.id)
       if (error) throw error
-      await adjustInventoryQuantity(allocation.warehouse_location_id, -allocation.quantity)
+      const nextTotals = await getLineAllocationTotals()
+      await syncInventoryToAllocationDelta(previousTotals, nextTotals)
     },
     onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['allocations', lineItem.id] })
@@ -1635,7 +1672,7 @@ function AllocationSection({
   })
 
   const updateAllocationQuantity = useMutation({
-    mutationFn: async ({ allocationId, locationId, previousQty, nextQty }: { allocationId: string; locationId: string; previousQty: number; nextQty: number }) => {
+    mutationFn: async ({ allocationId, previousQty, nextQty }: { allocationId: string; previousQty: number; nextQty: number }) => {
       if (!Number.isFinite(nextQty) || nextQty <= 0) throw new Error('Allocation quantity must be greater than zero')
 
       const allocatedExcludingThis = allocatedQty - previousQty
@@ -1644,13 +1681,15 @@ function AllocationSection({
         throw new Error(`Cannot allocate more than line item quantity (${lineItem.quantity})`)
       }
 
+      const previousTotals = await getLineAllocationTotals()
       const { error } = await supabase
         .from('purchase_allocations')
         .update({ quantity: nextQty })
         .eq('id', allocationId)
       if (error) throw error
 
-      await adjustInventoryQuantity(locationId, nextQty - previousQty)
+      const nextTotals = await getLineAllocationTotals()
+      await syncInventoryToAllocationDelta(previousTotals, nextTotals)
     },
     onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['allocations', lineItem.id] })
@@ -1678,13 +1717,17 @@ function AllocationSection({
     mutationFn: async ({ allocationId, fromLocationId, toLocationId, qty }: { allocationId: string; fromLocationId: string; toLocationId: string; qty: number }) => {
       if (fromLocationId === toLocationId) return
 
+      const previousTotals = await getLineAllocationTotals()
       const { error } = await supabase
         .from('purchase_allocations')
         .update({ warehouse_location_id: toLocationId })
         .eq('id', allocationId)
       if (error) throw error
 
-      await moveInventoryQuantity(fromLocationId, toLocationId, qty)
+      const nextTotals = new Map(previousTotals)
+      nextTotals.set(fromLocationId, (nextTotals.get(fromLocationId) ?? 0) - qty)
+      nextTotals.set(toLocationId, (nextTotals.get(toLocationId) ?? 0) + qty)
+      await syncInventoryToAllocationDelta(previousTotals, nextTotals)
     },
     onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['allocations', lineItem.id] })
@@ -1771,7 +1814,6 @@ function AllocationSection({
                     if (nextQty === a.quantity) return
                     updateAllocationQuantity.mutate({
                       allocationId: a.id,
-                      locationId: a.warehouse_location_id,
                       previousQty: a.quantity,
                       nextQty,
                     })

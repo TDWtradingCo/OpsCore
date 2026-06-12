@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Tdot Dashboard Business Requirements Document</title>
+  <style>
+    body { font-family: Arial, sans-serif; color: #111827; line-height: 1.5; max-width: 920px; margin: 40px auto; padding: 0 24px; }
+    h1 { font-size: 30px; margin-bottom: 4px; }
+    h2 { font-size: 22px; margin-top: 32px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+    h3 { font-size: 17px; margin-top: 24px; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0 20px; font-size: 13px; }
+    th, td { border: 1px solid #d1d5db; padding: 8px; vertical-align: top; }
+    th { background: #f3f4f6; text-align: left; }
+    code { background: #f3f4f6; padding: 1px 4px; border-radius: 3px; }
+    .meta { color: #4b5563; margin-top: 0; }
+    .page-break { page-break-before: always; }
+  </style>
+</head>
+<body>
+  <h1>Business Requirements Document</h1>
+  <h2>Tdot Dashboard / OpsCore</h2>
+  <p class="meta"><strong>Document version:</strong> 1.0<br>
+  <strong>Prepared date:</strong> 2026-06-10<br>
+  <strong>Prepared for:</strong> Tdot Dashboard project stakeholders<br>
+  <strong>Prepared by:</strong> GitHub Copilot<br>
+  <strong>System type:</strong> Internal inventory, purchasing, pricing, shipment tracking, order management, and profitability dashboard</p>
+
+  <h2>1. Executive Summary</h2>
+  <p>Tdot Dashboard, branded in the application shell as OpsCore, is an internal operational platform for managing product master data, supplier purchasing, warehouse inventory, sales channel pricing, shipment tracking, customer orders, activity auditing, and profitability analysis.</p>
+  <p>The platform consolidates operational data that would otherwise be spread across spreadsheets, supplier invoices, marketplace portals, warehouse records, and ad hoc calculations. Its core business value is to provide a single authenticated workspace where users can maintain accurate product and inventory records, calculate landed costs from purchases, manage pricing across sales channels, and evaluate projected profitability by product and channel.</p>
+  <p>The system is implemented as a React, TypeScript, Vite frontend backed by Supabase PostgreSQL, Supabase Auth, Supabase Storage, and Row Level Security policies.</p>
+
+  <h2>2. Business Objectives</h2>
+  <ol>
+    <li>Centralize product, supplier, inventory, purchase, sales channel, order, and shipment information in one operational dashboard.</li>
+    <li>Reduce manual spreadsheet work for importing, updating, filtering, and exporting operational records.</li>
+    <li>Maintain reliable inventory quantities across multiple warehouse and fulfillment locations.</li>
+    <li>Calculate landed unit costs when purchases are completed, using product quantities and additional purchase costs.</li>
+    <li>Support channel-specific pricing and fulfillment costs so the business can compare projected gross profit and margin.</li>
+    <li>Improve operational traceability through activity logs and inventory movement history.</li>
+    <li>Support secure access through authenticated user accounts and role-aware administration settings.</li>
+  </ol>
+
+  <h2>3. Project Scope</h2>
+  <h3>In Scope</h3>
+  <ul>
+    <li>User authentication and protected dashboard access.</li>
+    <li>Product catalog management, including SKU, business product code, UPC/GTIN, brand, dimensions, weight, status, and product images.</li>
+    <li>Supplier management, including contact information, status, notes, and geographic shipment metadata.</li>
+    <li>Warehouse location management.</li>
+    <li>Inventory summary, inventory by location, adjustments, transfers, movement history, tax paid visibility, and bulk inventory updates.</li>
+    <li>Purchase invoice management, including line items, tax values, additional costs, warehouse allocations, landed cost calculation, completion, and inventory posting.</li>
+    <li>Shipment tracking for purchase orders, including status pipeline, ETA, carrier/tracking data, shipment events, and delay indicators.</li>
+    <li>Sales channel management, including commission percentage and status.</li>
+    <li>Channel pricing management, including retail, offer, promo, fulfillment mode, seller shipping cost, and marketplace fulfillment cost.</li>
+    <li>Profitability analysis by product and sales channel.</li>
+    <li>Customer order management, including order items, status, channel, customer information, import, export, and database/local fallback behavior.</li>
+    <li>Dashboard summary metrics and charts.</li>
+    <li>CSV import/export workflows for major operational entities.</li>
+    <li>Dashboard-wide activity logging.</li>
+  </ul>
+  <h3>Out of Scope For Current Version</h3>
+  <ul>
+    <li>Direct integrations with marketplace APIs such as Amazon, Walmart, Best Buy, Shopify, or carrier tracking APIs.</li>
+    <li>Automated purchase order generation from reorder points.</li>
+    <li>Automated inventory reservation or deduction from customer orders.</li>
+    <li>Accounting system integration.</li>
+    <li>Multi-currency landed cost handling.</li>
+    <li>Advanced role-based permission matrices beyond admin and standard roles.</li>
+    <li>Native mobile applications.</li>
+  </ul>
+
+  <h2>4. Stakeholders And Users</h2>
+  <table>
+    <tr><th>Stakeholder / User Group</th><th>Primary Needs</th></tr>
+    <tr><td>Operations team</td><td>Maintain product, supplier, purchase, shipment, and inventory records.</td></tr>
+    <tr><td>Inventory managers</td><td>View quantities by product and location, make adjustments, transfer stock, and audit movement history.</td></tr>
+    <tr><td>Purchasing team</td><td>Record supplier invoices, allocate purchased stock, track inbound shipments, and complete purchases.</td></tr>
+    <tr><td>Pricing / marketplace team</td><td>Maintain channel pricing, commissions, fulfillment cost assumptions, and compare margins.</td></tr>
+    <tr><td>Finance / management</td><td>Review landed costs, gross profit, margins, purchase history, and operational activity.</td></tr>
+    <tr><td>Administrators</td><td>Manage users, roles, warehouse locations, sales channels, and system configuration.</td></tr>
+  </table>
+
+  <h2>5. Current Business Problems</h2>
+  <ol>
+    <li>Product, purchase, supplier, inventory, pricing, and profitability data are difficult to manage consistently when spread across disconnected tools.</li>
+    <li>Landed cost calculations require repeatable allocation rules and reliable links to purchase line items.</li>
+    <li>Inventory changes need an auditable history to reduce errors and support reconciliation.</li>
+    <li>Channel pricing decisions require visibility into commissions, fulfillment costs, landed costs, and margin outcomes.</li>
+    <li>Manual data entry needs CSV import/export support for migration, correction, reporting, and offline analysis.</li>
+  </ol>
+
+  <h2>6. Target Future State</h2>
+  <p>The target state is a secure, browser-based operations command center where authenticated users can manage the full flow from product setup to supplier purchase, inbound shipment tracking, inventory posting, channel pricing, customer order tracking, and margin analysis.</p>
+  <ol>
+    <li>Create or import product and supplier records.</li>
+    <li>Create purchase invoices with line items, taxes, additional costs, and warehouse allocations.</li>
+    <li>Track inbound shipments against purchases.</li>
+    <li>Complete purchases to calculate landed unit costs and post inventory to the appropriate locations.</li>
+    <li>Manage prices and fulfillment assumptions by sales channel.</li>
+    <li>Analyze projected gross profit and margin using latest landed costs.</li>
+    <li>Monitor activity logs, inventory movements, dashboard metrics, and exceptions such as low stock or delayed shipments.</li>
+  </ol>
+
+  <h2>7. Functional Requirements</h2>
+
+  <h3>7.1 Authentication And Access</h3>
+  <table>
+    <tr><th>ID</th><th>Requirement</th><th>Priority</th><th>Acceptance Criteria</th></tr>
+    <tr><td>FR-AUTH-001</td><td>The system shall require users to authenticate before accessing dashboard modules.</td><td>Must</td><td>Unauthenticated users are redirected to the login page.</td></tr>
+    <tr><td>FR-AUTH-002</td><td>The system shall support user sign-in, sign-up, sign-out, session loading, and profile retrieval.</td><td>Must</td><td>A signed-in user can access protected routes and see profile/role information in the navigation shell.</td></tr>
+    <tr><td>FR-AUTH-003</td><td>The system shall support at least admin and standard user roles.</td><td>Must</td><td>Admin-only settings such as user role management are visible only to admin users.</td></tr>
+    <tr><td>FR-AUTH-004</td><td>The system shall use database-level Row Level Security for authenticated access to application tables.</td><td>Must</td><td>Supabase RLS policies allow authenticated users to perform supported operations.</td></tr>
+  </table>
+
+  <h3>7.2 Dashboard And Navigation</h3>
+  <table>
+    <tr><th>ID</th><th>Requirement</th><th>Priority</th><th>Acceptance Criteria</th></tr>
+    <tr><td>FR-DASH-001</td><td>The system shall provide a dashboard landing page with summary metrics for products, inventory, purchases, suppliers, channels, and warehouses.</td><td>Must</td><td>Users can view active counts and recent operational activity after login.</td></tr>
+    <tr><td>FR-DASH-002</td><td>The system shall show visual summaries such as inventory by location, purchase status, low-stock products, recent purchases, recent movements, and top products by inventory value.</td><td>Should</td><td>Dashboard widgets and charts populate from Supabase data.</td></tr>
+    <tr><td>FR-DASH-003</td><td>The system shall allow users to reorder dashboard stat cards locally.</td><td>Could</td><td>Stat card order persists in browser local storage.</td></tr>
+    <tr><td>FR-DASH-004</td><td>The system shall provide responsive navigation for desktop and mobile layouts.</td><td>Must</td><td>Sidebar navigation works on desktop and collapses into a mobile menu.</td></tr>
+  </table>
+
+  <h3>7.3 Product Management</h3>
+  <table>
+    <tr><th>ID</th><th>Requirement</th><th>Priority</th><th>Acceptance Criteria</th></tr>
+    <tr><td>FR-PROD-001</td><td>The system shall allow users to create, view, search, filter, sort, edit, archive/status, and delete product records where allowed.</td><td>Must</td><td>Product records can be managed from the Products module.</td></tr>
+    <tr><td>FR-PROD-002</td><td>The system shall store product name, SKU, generated product code, status, UPC/GTIN, brand, image URL, weight, weight unit, dimensions, and dimension unit.</td><td>Must</td><td>Required fields are validated and optional attributes can be saved.</td></tr>
+    <tr><td>FR-PROD-003</td><td>The system shall enforce SKU uniqueness and product code uniqueness.</td><td>Must</td><td>Duplicate SKU/product code records are rejected by the database.</td></tr>
+    <tr><td>FR-PROD-004</td><td>The system shall support product image upload through a public Supabase Storage bucket.</td><td>Should</td><td>Uploaded product images receive public URLs and are associated with products.</td></tr>
+    <tr><td>FR-PROD-005</td><td>The system shall support product CSV export, product template download, and product CSV import.</td><td>Should</td><td>Users can export current products, download a template, and import valid CSV rows.</td></tr>
+    <tr><td>FR-PROD-006</td><td>The system shall prevent deletion of products that have inventory or purchase history, except for supported cleanup scenarios.</td><td>Must</td><td>Attempting to delete protected products returns a clear error or follows defined cleanup logic.</td></tr>
+    <tr><td>FR-PROD-007</td><td>The system shall write activity log entries for product create and delete actions.</td><td>Should</td><td>Product changes appear in the activity log with user and description.</td></tr>
+  </table>
+
+  <h3>7.4 Supplier Management</h3>
+  <table>
+    <tr><th>ID</th><th>Requirement</th><th>Priority</th><th>Acceptance Criteria</th></tr>
+    <tr><td>FR-SUP-001</td><td>The system shall allow users to create, view, search, filter, sort, edit, and delete supplier records where allowed.</td><td>Must</td><td>Supplier records can be managed from the Suppliers module.</td></tr>
+    <tr><td>FR-SUP-002</td><td>The system shall store supplier name, short name, email, phone, notes, status, country, city, latitude, and longitude as supported by the schema.</td><td>Should</td><td>Supplier records support operational and shipment-origin metadata.</td></tr>
+    <tr><td>FR-SUP-003</td><td>The system shall prevent deletion of suppliers with associated purchase records.</td><td>Must</td><td>Users receive an error if a supplier is referenced by purchases.</td></tr>
+    <tr><td>FR-SUP-004</td><td>The system shall support supplier export and bulk supplier import/template workflows.</td><td>Should</td><td>Users can export supplier data and load supplier records from CSV templates.</td></tr>
+    <tr><td>FR-SUP-005</td><td>The system shall log supplier delete actions in the activity log.</td><td>Should</td><td>Supplier deletion appears with user, entity, and description.</td></tr>
+  </table>
+
+  <h3>7.5 Warehouse Location And Inventory Management</h3>
+  <table>
+    <tr><th>ID</th><th>Requirement</th><th>Priority</th><th>Acceptance Criteria</th></tr>
+    <tr><td>FR-INV-001</td><td>The system shall maintain inventory by product and warehouse location.</td><td>Must</td><td>Each product/location combination has a unique inventory record.</td></tr>
+    <tr><td>FR-INV-002</td><td>The system shall prevent negative inventory quantities.</td><td>Must</td><td>Database checks and application validation prevent quantity values below zero.</td></tr>
+    <tr><td>FR-INV-003</td><td>The system shall provide inventory summary, by-location view, and movement history tabs.</td><td>Must</td><td>Users can view total product quantity, location-specific quantities, and recent movement records.</td></tr>
+    <tr><td>FR-INV-004</td><td>The system shall allow users to search inventory and filter by warehouse location.</td><td>Must</td><td>Results update according to product, SKU, location, and selected warehouse criteria.</td></tr>
+    <tr><td>FR-INV-005</td><td>The system shall allow manual inventory increases and decreases with a required reason.</td><td>Must</td><td>Adjustments update inventory and create movement records of adjustment_increase or adjustment_decrease.</td></tr>
+    <tr><td>FR-INV-006</td><td>The system shall allow inventory transfers between two different warehouse locations.</td><td>Must</td><td>Source quantity is reduced, destination quantity is increased or created, and a transfer movement is recorded.</td></tr>
+    <tr><td>FR-INV-007</td><td>The system shall prevent transfer or decrease actions that exceed available quantity.</td><td>Must</td><td>The user receives a clear error and inventory remains unchanged.</td></tr>
+    <tr><td>FR-INV-008</td><td>The system shall support bulk inventory update templates and import workflow.</td><td>Should</td><td>Users can download a template and upload valid updates.</td></tr>
+    <tr><td>FR-INV-009</td><td>The system shall support CSV export for inventory records and movement history.</td><td>Should</td><td>Users can export visible inventory and movement data.</td></tr>
+    <tr><td>FR-INV-010</td><td>The system shall expose tax paid by product/location where purchase allocations contain tax amounts.</td><td>Could</td><td>Inventory summary includes tax paid values derived from purchase allocation data.</td></tr>
+  </table>
+
+  <h3>7.6 Purchase Management And Landed Costing</h3>
+  <table>
+    <tr><th>ID</th><th>Requirement</th><th>Priority</th><th>Acceptance Criteria</th></tr>
+    <tr><td>FR-PUR-001</td><td>The system shall allow users to create, search, filter, sort, edit, delete, import, and export purchase invoices.</td><td>Must</td><td>Purchases can be managed from the Purchases module using invoice, supplier, status, date, and sort filters.</td></tr>
+    <tr><td>FR-PUR-002</td><td>The system shall maintain purchase statuses of draft and completed.</td><td>Must</td><td>New purchases are created as draft and can be completed after validation.</td></tr>
+    <tr><td>FR-PUR-003</td><td>The system shall support purchase line items with product, quantity, unit cost, tax percent, tax amount, tax recoverability, and landed unit cost.</td><td>Must</td><td>Line item data is stored and validated against positive quantity and non-negative cost/tax rules.</td></tr>
+    <tr><td>FR-PUR-004</td><td>The system shall support additional purchase costs such as shipping, customs duties, and other costs.</td><td>Must</td><td>Additional costs can be added, updated, deleted, and included in landed cost calculations.</td></tr>
+    <tr><td>FR-PUR-005</td><td>The system shall require warehouse allocations before completing purchase line items.</td><td>Must</td><td>Completion fails if a line item has no allocation.</td></tr>
+    <tr><td>FR-PUR-006</td><td>The system shall calculate landed unit cost at purchase completion.</td><td>Must</td><td>Additional costs are distributed proportionally by line item quantity and stored on each line item.</td></tr>
+    <tr><td>FR-PUR-007</td><td>The system shall post allocated quantities to inventory when a purchase is completed.</td><td>Must</td><td>Inventory is inserted or incremented per product/location allocation.</td></tr>
+    <tr><td>FR-PUR-008</td><td>The system shall create inventory movement records for completed purchase allocations.</td><td>Must</td><td>Each allocation creates a purchase_allocation movement tied to the purchase reference.</td></tr>
+    <tr><td>FR-PUR-009</td><td>The system shall allow completed purchase deletion to revert inventory quantities according to allocations.</td><td>Should</td><td>Deleted completed purchases reduce or remove associated inventory records without negative results.</td></tr>
+    <tr><td>FR-PUR-010</td><td>The system shall write activity log entries for purchase, line item, additional cost, allocation, and completion actions.</td><td>Should</td><td>Relevant purchase events appear in the activity log with user and change details where available.</td></tr>
+    <tr><td>FR-PUR-011</td><td>The system shall support CSV import of purchase invoices grouped by invoice and mapped to suppliers, products, and warehouses.</td><td>Should</td><td>Valid CSV rows create invoices, line items, costs, and allocations according to template fields.</td></tr>
+  </table>
+
+  <h3>7.7 Shipment Tracking</h3>
+  <table>
+    <tr><th>ID</th><th>Requirement</th><th>Priority</th><th>Acceptance Criteria</th></tr>
+    <tr><td>FR-SHIP-001</td><td>The system shall allow users to track shipments against purchase invoices.</td><td>Must</td><td>A shipment can be created for a purchase with carrier, tracking number, ETA, origin, destination, and notes.</td></tr>
+    <tr><td>FR-SHIP-002</td><td>The system shall support shipment statuses of ordered, shipped, in_transit, customs, delivered, and received.</td><td>Must</td><td>Shipments appear in the correct pipeline status column and list view.</td></tr>
+    <tr><td>FR-SHIP-003</td><td>The system shall display active shipment, delayed shipment, origin country, and received shipment summary metrics.</td><td>Should</td><td>Metrics update based on shipment status and estimated arrival dates.</td></tr>
+    <tr><td>FR-SHIP-004</td><td>The system shall maintain shipment event history.</td><td>Should</td><td>Status changes create timeline events with status, location, notes, date, and user where available.</td></tr>
+    <tr><td>FR-SHIP-005</td><td>The system shall identify delayed shipments.</td><td>Should</td><td>Shipments with ETA before the current date and not received are marked delayed.</td></tr>
+  </table>
+
+  <h3>7.8 Sales Channels And Pricing</h3>
+  <table>
+    <tr><th>ID</th><th>Requirement</th><th>Priority</th><th>Acceptance Criteria</th></tr>
+    <tr><td>FR-CH-001</td><td>The system shall allow users to create, view, search, edit, delete, and export sales channels.</td><td>Must</td><td>Sales channels can be managed from Sales Channels and Settings modules.</td></tr>
+    <tr><td>FR-CH-002</td><td>The system shall store channel name, commission percentage, and status.</td><td>Must</td><td>Commission percent is validated between 0 and 100.</td></tr>
+    <tr><td>FR-CH-003</td><td>The system shall prevent deletion of sales channels that have pricing rules.</td><td>Must</td><td>Users receive an error when attempting to delete a referenced channel.</td></tr>
+    <tr><td>FR-PRICE-001</td><td>The system shall support channel-specific pricing per product.</td><td>Must</td><td>Each product/channel combination can have one pricing record.</td></tr>
+    <tr><td>FR-PRICE-002</td><td>The system shall support retail price, offer price, promo price, fulfillment mode, seller shipping cost, and marketplace fulfillment cost.</td><td>Must</td><td>Users can add and inline-edit pricing and fulfillment assumptions.</td></tr>
+    <tr><td>FR-PRICE-003</td><td>The system shall calculate active price using promo price first, then offer price, then retail price.</td><td>Should</td><td>Pricing tables and profitability use the expected active price hierarchy.</td></tr>
+    <tr><td>FR-PRICE-004</td><td>The system shall allow filtering pricing by product search and selected sales channel.</td><td>Should</td><td>Pricing list updates when search or channel filter changes.</td></tr>
+  </table>
+
+  <h3>7.9 Profitability Analysis</h3>
+  <table>
+    <tr><th>ID</th><th>Requirement</th><th>Priority</th><th>Acceptance Criteria</th></tr>
+    <tr><td>FR-PROFIT-001</td><td>The system shall calculate projected profitability by product and sales channel.</td><td>Must</td><td>Profitability rows display price, landed cost, commission, fulfillment, gross profit, and margin.</td></tr>
+    <tr><td>FR-PROFIT-002</td><td>The system shall use the most recent landed unit cost per product from completed purchase line items.</td><td>Must</td><td>Landed cost values are derived from purchase line items with stored landed_unit_cost.</td></tr>
+    <tr><td>FR-PROFIT-003</td><td>The system shall allow profitability analysis by price basis: active, retail, offer, or promo.</td><td>Should</td><td>Users can switch price basis and see recalculated margin results.</td></tr>
+    <tr><td>FR-PROFIT-004</td><td>The system shall summarize average margin, profitable count, and unprofitable count.</td><td>Should</td><td>Summary cards update based on filtered analysis data.</td></tr>
+  </table>
+
+  <h3>7.10 Order Management</h3>
+  <table>
+    <tr><th>ID</th><th>Requirement</th><th>Priority</th><th>Acceptance Criteria</th></tr>
+    <tr><td>FR-ORD-001</td><td>The system shall allow users to create, view, search, filter, edit, delete, import, and export customer orders.</td><td>Should</td><td>Orders can be managed by status, channel, date range, customer, order number, and product search.</td></tr>
+    <tr><td>FR-ORD-002</td><td>The system shall support order statuses of pending, processing, shipped, delivered, and cancelled.</td><td>Should</td><td>Orders display and filter by supported status values.</td></tr>
+    <tr><td>FR-ORD-003</td><td>The system shall store order number, customer name, customer email, order date, status, total amount, sales channel, notes, and order items.</td><td>Should</td><td>Orders and line items persist to Supabase where the orders schema exists.</td></tr>
+    <tr><td>FR-ORD-004</td><td>The system shall support a local storage fallback when the orders database tables are unavailable.</td><td>Could</td><td>The Orders module can operate with clearly indicated local/demo storage and offers a retry connection action.</td></tr>
+    <tr><td>FR-ORD-005</td><td>The system shall log order create, update, and delete activity where implemented.</td><td>Could</td><td>Order events appear in the activity log or equivalent audit trail.</td></tr>
+  </table>
+
+  <h3>7.11 Activity Log And Auditability</h3>
+  <table>
+    <tr><th>ID</th><th>Requirement</th><th>Priority</th><th>Acceptance Criteria</th></tr>
+    <tr><td>FR-AUD-001</td><td>The system shall maintain a dashboard activity log for key entity actions.</td><td>Must</td><td>Activity records include entity type, action, entity ID, description, metadata, user, and created timestamp.</td></tr>
+    <tr><td>FR-AUD-002</td><td>The system shall allow users to filter activity by entity type, action, user, date range, and sort direction.</td><td>Should</td><td>Activity table updates based on selected filters.</td></tr>
+    <tr><td>FR-AUD-003</td><td>The system shall support activity log CSV export.</td><td>Should</td><td>Filtered log rows can be exported with date, entity, action, description, user, and metadata.</td></tr>
+    <tr><td>FR-AUD-004</td><td>The system shall maintain immutable inventory movement history.</td><td>Must</td><td>Inventory movement records are append-only from the application type model.</td></tr>
+  </table>
+
+  <h3>7.12 Data Import And Export</h3>
+  <table>
+    <tr><th>ID</th><th>Requirement</th><th>Priority</th><th>Acceptance Criteria</th></tr>
+    <tr><td>FR-DATA-001</td><td>The system shall provide CSV exports for products, suppliers, sales channels, purchases, inventory, inventory movements, orders, and activity logs.</td><td>Should</td><td>Each export downloads a CSV with defined columns.</td></tr>
+    <tr><td>FR-DATA-002</td><td>The system shall provide CSV templates for supported bulk import workflows.</td><td>Should</td><td>Users can download templates for products, purchases, suppliers, orders, and inventory updates.</td></tr>
+    <tr><td>FR-DATA-003</td><td>The system shall normalize imported CSV headers into expected field names.</td><td>Should</td><td>Headers containing spaces, asterisks, and parenthetical helper text are parsed correctly.</td></tr>
+    <tr><td>FR-DATA-004</td><td>The system shall validate imported references such as supplier, product, warehouse, and channel identifiers.</td><td>Must</td><td>Invalid references fail with actionable error messages before incomplete data is saved.</td></tr>
+  </table>
+
+  <h2>8. Data Requirements</h2>
+  <table>
+    <tr><th>Entity</th><th>Purpose</th><th>Key Fields</th></tr>
+    <tr><td>Users</td><td>Application profile and role data linked to Supabase Auth.</td><td>id, email, full_name, role.</td></tr>
+    <tr><td>Products</td><td>Product master records.</td><td>id, product_code, name, sku, status, UPC/GTIN, brand, image_url, weight, dimensions.</td></tr>
+    <tr><td>Warehouse Locations</td><td>Inventory storage and fulfillment locations.</td><td>id, name, status, address/geographic fields.</td></tr>
+    <tr><td>Inventory</td><td>Current quantity per product/location.</td><td>product_id, warehouse_location_id, quantity.</td></tr>
+    <tr><td>Inventory Movements</td><td>Audit history for inventory changes.</td><td>product_id, source, destination, quantity, movement_type, reference, reason, user.</td></tr>
+    <tr><td>Suppliers</td><td>Supplier master data.</td><td>name, short_name, email, phone, notes, status, location metadata.</td></tr>
+    <tr><td>Purchases</td><td>Supplier invoice headers.</td><td>invoice_number, supplier_id, status, invoice_date, created_by, completed_at.</td></tr>
+    <tr><td>Purchase Line Items</td><td>Products and costs on purchase invoices.</td><td>product_id, quantity, unit_cost, tax fields, landed_unit_cost.</td></tr>
+    <tr><td>Shipment Tracking</td><td>Inbound shipment records tied to purchases.</td><td>purchase_id, status, carrier, tracking_number, ETA, arrival, origin, destination.</td></tr>
+    <tr><td>Sales Channels</td><td>Marketplace/channel configuration.</td><td>name, commission_percent, status.</td></tr>
+    <tr><td>Channel Pricing</td><td>Product pricing by channel.</td><td>product_id, channel_id, retail, offer, promo, fulfillment mode and costs.</td></tr>
+    <tr><td>Orders</td><td>Customer order headers.</td><td>order_number, customer, status, date, total, sales_channel, notes.</td></tr>
+    <tr><td>Dashboard Activity Log</td><td>Operational audit log.</td><td>entity_type, action, entity_id, description, metadata, user_id, created_at.</td></tr>
+  </table>
+
+  <h2>9. Key Business Workflows</h2>
+  <h3>Purchase To Inventory Workflow</h3>
+  <ol>
+    <li>User creates a draft purchase invoice for a supplier.</li>
+    <li>User adds purchase line items with quantity, unit cost, tax percent, tax amount, and tax recoverability.</li>
+    <li>User adds additional costs such as shipping or customs duties.</li>
+    <li>User allocates each line item quantity to one or more warehouse locations.</li>
+    <li>User completes the purchase.</li>
+    <li>System allocates additional costs proportionally by line item quantity.</li>
+    <li>System stores landed unit cost on line items.</li>
+    <li>System increases inventory per allocation.</li>
+    <li>System creates inventory movement records.</li>
+    <li>System marks the purchase completed and logs activity.</li>
+  </ol>
+
+  <h3>Pricing And Profitability Workflow</h3>
+  <ol>
+    <li>User creates sales channels and commission percentages.</li>
+    <li>User creates or edits product pricing by channel.</li>
+    <li>User defines fulfillment mode and cost assumptions.</li>
+    <li>System selects price basis using active, retail, offer, or promo logic.</li>
+    <li>System retrieves latest landed cost per product.</li>
+    <li>System calculates commission, fulfillment cost, gross profit, and margin.</li>
+    <li>User filters and reviews profitability outcomes.</li>
+  </ol>
+
+  <h2>10. Reporting And Analytics Requirements</h2>
+  <table>
+    <tr><th>Report / View</th><th>Business Purpose</th></tr>
+    <tr><td>Dashboard summary</td><td>Quick operational health view across products, inventory, purchases, suppliers, channels, and warehouses.</td></tr>
+    <tr><td>Inventory by location</td><td>Identify where stock is held and support transfer/replenishment decisions.</td></tr>
+    <tr><td>Low-stock products</td><td>Highlight products at or below low-stock threshold.</td></tr>
+    <tr><td>Movement history</td><td>Audit inventory changes and support reconciliation.</td></tr>
+    <tr><td>Shipment pipeline</td><td>Track inbound purchase orders and delayed shipments.</td></tr>
+    <tr><td>Channel pricing table</td><td>Maintain marketplace pricing and fulfillment assumptions.</td></tr>
+    <tr><td>Profitability analysis</td><td>Compare projected product/channel profitability using landed costs.</td></tr>
+    <tr><td>Activity log</td><td>Review system changes by user, entity, action, and date.</td></tr>
+  </table>
+
+  <h2>11. Non-Functional Requirements</h2>
+  <table>
+    <tr><th>Category</th><th>Requirement</th><th>Priority</th></tr>
+    <tr><td>Security</td><td>All operational pages shall require authentication.</td><td>Must</td></tr>
+    <tr><td>Security</td><td>Supabase RLS shall be enabled on application tables.</td><td>Must</td></tr>
+    <tr><td>Security</td><td>Secrets shall be stored in environment variables, not committed source.</td><td>Must</td></tr>
+    <tr><td>Usability</td><td>The interface shall support search, filters, pagination, and clear empty/error states for operational tables.</td><td>Must</td></tr>
+    <tr><td>Reliability</td><td>Inventory updates shall preserve non-negative quantities.</td><td>Must</td></tr>
+    <tr><td>Auditability</td><td>Key operational mutations shall create activity records or movement history.</td><td>Must</td></tr>
+  </table>
+
+  <h2>12. Business Rules</h2>
+  <ol>
+    <li>Only authenticated users can access dashboard data.</li>
+    <li>Admin users can access user role management in Settings.</li>
+    <li>Purchases start as draft and become completed when the completion workflow succeeds.</li>
+    <li>Landed unit cost is calculated at completion using line item quantity as the proportional allocation basis for additional costs.</li>
+    <li>Inventory changes must create movement records for purchase allocations, transfers, and adjustments.</li>
+    <li>Inventory cannot go negative.</li>
+    <li>A product cannot normally be deleted if it has inventory or purchase history.</li>
+    <li>A supplier cannot be deleted if it has associated purchases.</li>
+    <li>A sales channel cannot be deleted if it has pricing records.</li>
+    <li>Active price is promo price when available, otherwise offer price, otherwise retail price.</li>
+    <li>Profitability gross profit equals selected price minus landed cost, channel commission, and fulfillment cost.</li>
+    <li>Shipments are delayed when estimated arrival is before the current date and status is not received.</li>
+  </ol>
+
+  <h2>13. Integrations And External Dependencies</h2>
+  <table>
+    <tr><th>Dependency</th><th>Purpose</th></tr>
+    <tr><td>Supabase Auth</td><td>User authentication and session management.</td></tr>
+    <tr><td>Supabase PostgreSQL</td><td>Application database for operational entities.</td></tr>
+    <tr><td>Supabase Row Level Security</td><td>Database-level access control.</td></tr>
+    <tr><td>Supabase Storage</td><td>Product image storage through product-images bucket.</td></tr>
+    <tr><td>React Query</td><td>Client-side data fetching and cache invalidation.</td></tr>
+    <tr><td>React Hook Form and Zod</td><td>Form validation and typed data handling.</td></tr>
+    <tr><td>Recharts</td><td>Dashboard and analytical visualizations.</td></tr>
+    <tr><td>Browser localStorage</td><td>Dashboard card order persistence and fallback order storage where needed.</td></tr>
+  </table>
+
+  <h2>14. Assumptions</h2>
+  <ol>
+    <li>Users are internal team members with authorized access to company operational data.</li>
+    <li>Supabase is the system of record for production data.</li>
+    <li>Purchase line item quantity is an acceptable allocation basis for additional landed costs in the current version.</li>
+    <li>Marketplace commissions and fulfillment costs are entered manually and maintained by users.</li>
+    <li>Product/channel profitability is projected, not a finalized accounting statement.</li>
+    <li>Orders currently do not automatically decrement inventory unless a future workflow is added.</li>
+    <li>Carrier tracking status is manually maintained unless future external integrations are implemented.</li>
+  </ol>
+
+  <h2>15. Constraints</h2>
+  <ol>
+    <li>The application depends on valid Supabase environment variables for production use.</li>
+    <li>RLS policies must remain aligned with the frontend workflows.</li>
+    <li>Large imports depend on valid CSV formatting and reference data setup.</li>
+    <li>The current schema supports two roles: admin and standard.</li>
+    <li>Local storage order fallback is not a production-grade data store and should be treated as temporary/demo behavior.</li>
+  </ol>
+
+  <h2>16. Risks And Mitigations</h2>
+  <table>
+    <tr><th>Risk</th><th>Impact</th><th>Mitigation</th></tr>
+    <tr><td>Manual pricing and fulfillment cost inputs become outdated.</td><td>Profitability analysis may be inaccurate.</td><td>Add review cadence, timestamps, and future marketplace integrations.</td></tr>
+    <tr><td>Purchase completion partially updates records if a client-side sequence fails.</td><td>Inventory and landed costs may become inconsistent.</td><td>Move completion into a database transaction/RPC in a future hardening phase.</td></tr>
+    <tr><td>CSV imports contain ambiguous product or supplier references.</td><td>Incorrect records may be created or import may fail.</td><td>Require templates, validate references, and provide row-level error messages.</td></tr>
+    <tr><td>Orders local storage fallback is used unintentionally.</td><td>Orders may not be shared across users or devices.</td><td>Make database connection status prominent and prioritize Supabase table deployment.</td></tr>
+    <tr><td>Broad authenticated RLS policies allow more access than desired.</td><td>Users may mutate data outside intended role boundaries.</td><td>Define a detailed role/permission matrix and tighten RLS policies.</td></tr>
+  </table>
+
+  <h2>17. Open Questions</h2>
+  <ol>
+    <li>Should order creation reserve or deduct inventory, and at what order status should that occur?</li>
+    <li>Should purchase completion be executed in a Supabase database function to guarantee atomicity?</li>
+    <li>Should landed cost allocation use quantity, weight, value, or configurable allocation basis?</li>
+    <li>Should tax recoverability affect landed cost or profitability calculations?</li>
+    <li>What are the exact permission boundaries between admin and standard users?</li>
+    <li>Are marketplace and carrier API integrations planned for automatic price, order, fulfillment, or shipment sync?</li>
+    <li>What low-stock thresholds should be configurable per product or location?</li>
+    <li>Should deleted operational records be soft-deleted instead of permanently deleted?</li>
+  </ol>
+
+  <h2>18. Success Metrics</h2>
+  <table>
+    <tr><th>Metric</th><th>Target Outcome</th></tr>
+    <tr><td>Product data completeness</td><td>High percentage of active products with SKU, product code, brand, and dimensional data where applicable.</td></tr>
+    <tr><td>Purchase processing accuracy</td><td>Completed purchases consistently create landed costs and correct inventory movements.</td></tr>
+    <tr><td>Inventory reconciliation</td><td>Fewer manual corrections and clear movement history for adjustments/transfers.</td></tr>
+    <tr><td>Pricing visibility</td><td>All active sales channels have maintained commission and pricing records for key products.</td></tr>
+    <tr><td>Profitability visibility</td><td>Pricing team can identify profitable and unprofitable product/channel combinations quickly.</td></tr>
+    <tr><td>Audit coverage</td><td>Key operational changes are attributable to a user and timestamp.</td></tr>
+  </table>
+
+  <h2>19. Release Acceptance Criteria</h2>
+  <ol>
+    <li>Authenticated users can access all intended modules through the dashboard navigation.</li>
+    <li>Product, supplier, warehouse, sales channel, and pricing master data can be created, updated, searched, filtered, and exported.</li>
+    <li>Purchase invoices can be created with line items, additional costs, allocations, and completion workflow.</li>
+    <li>Completed purchases calculate landed unit costs and update inventory with movement records.</li>
+    <li>Inventory adjustments and transfers preserve quantity integrity and write movement history.</li>
+    <li>Profitability analysis displays accurate gross profit and margin based on selected price, latest landed cost, commission, and fulfillment cost.</li>
+    <li>Shipment tracking supports pipeline and list views with delay indicators and event history.</li>
+    <li>Orders can be managed with database persistence where tables are deployed.</li>
+    <li>Activity log records and filters key operational actions.</li>
+    <li>CSV import/export workflows work for supported templates and fail clearly for invalid references.</li>
+    <li><code>npm run build</code> completes successfully for the application.</li>
+  </ol>
+
+  <h2>20. Appendix: Source Areas Reviewed</h2>
+  <table>
+    <tr><th>Area</th><th>Source</th></tr>
+    <tr><td>Application routes and protected access</td><td><code>src/App.tsx</code></td></tr>
+    <tr><td>Navigation shell</td><td><code>src/components/layout/DashboardLayout.tsx</code></td></tr>
+    <tr><td>Project overview</td><td><code>README.md</code></td></tr>
+    <tr><td>Products</td><td><code>src/pages/ProductsPage.tsx</code>, <code>src/components/products/ProductForm.tsx</code></td></tr>
+    <tr><td>Inventory</td><td><code>src/pages/InventoryPage.tsx</code></td></tr>
+    <tr><td>Purchases and landed costing</td><td><code>src/pages/PurchasesPage.tsx</code>, <code>src/pages/PurchaseDetailPage.tsx</code></td></tr>
+    <tr><td>Shipment tracking</td><td><code>src/pages/ShipmentTrackingPage.tsx</code>, <code>supabase/migrations/003_shipment_tracking.sql</code></td></tr>
+    <tr><td>Pricing and profitability</td><td><code>src/pages/PricingPage.tsx</code>, <code>src/pages/ProfitabilityPage.tsx</code></td></tr>
+    <tr><td>Orders</td><td><code>src/pages/OrdersPage.tsx</code>, <code>supabase/migrations/008_create_orders_table.sql</code></td></tr>
+    <tr><td>Audit logging</td><td><code>src/pages/ActivityLogPage.tsx</code>, <code>src/lib/audit.ts</code>, <code>supabase/migrations/005_product_code_and_activity_log.sql</code></td></tr>
+  </table>
+</body>
+</html>
