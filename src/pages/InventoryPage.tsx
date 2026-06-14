@@ -17,6 +17,36 @@ import { exportToCSV } from '@/lib/csv'
 import { toast } from 'sonner'
 import { logDashboardActivity } from '@/lib/audit'
 
+async function getProductInventoryTotals(productId: string) {
+  const { data: inventoryRows, error: inventoryError } = await supabase
+    .from('inventory')
+    .select('quantity')
+    .eq('product_id', productId)
+  if (inventoryError) throw inventoryError
+
+  const { data: lineItems, error: lineItemsError } = await supabase
+    .from('purchase_line_items')
+    .select('id')
+    .eq('product_id', productId)
+  if (lineItemsError) throw lineItemsError
+
+  let totalReceived = 0
+  if (lineItems && lineItems.length > 0) {
+    const { data: allocations, error: allocationsError } = await supabase
+      .from('purchase_allocations')
+      .select('quantity')
+      .in('purchase_line_item_id', lineItems.map((lineItem) => lineItem.id))
+    if (allocationsError) throw allocationsError
+
+    totalReceived = allocations?.reduce((sum, allocation) => sum + allocation.quantity, 0) ?? 0
+  }
+
+  return {
+    currentStock: inventoryRows?.reduce((sum, row) => sum + row.quantity, 0) ?? 0,
+    totalReceived,
+  }
+}
+
 export function InventoryPage() {
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
@@ -561,31 +591,30 @@ function AdjustmentForm({ onSuccess }: { onSuccess: () => void }) {
 
   const adjustMutation = useMutation({
     mutationFn: async () => {
-      const qty = parseInt(quantity)
-      if (qty <= 0) throw new Error('Quantity must be positive')
+      const qty = parseInt(quantity, 10)
+      if (!Number.isFinite(qty) || qty <= 0) throw new Error('Quantity must be positive')
       if (!reason.trim()) throw new Error('Reason is required')
 
-      // Check current inventory for decreases
-      if (adjustmentType === 'decrease') {
-        const { data: current } = await supabase
-          .from('inventory')
-          .select('quantity')
-          .eq('product_id', productId)
-          .eq('warehouse_location_id', locationId)
-          .single()
-
-        if (!current || current.quantity < qty) {
-          throw new Error('Insufficient inventory for decrease')
-        }
-      }
-
-      // Upsert inventory record
-      const { data: existing } = await supabase
+      const { data: existing, error: existingError } = await supabase
         .from('inventory')
         .select('id, quantity')
         .eq('product_id', productId)
         .eq('warehouse_location_id', locationId)
-        .single()
+        .maybeSingle()
+      if (existingError) throw existingError
+
+      if (adjustmentType === 'decrease' && (!existing || existing.quantity < qty)) {
+        throw new Error('Insufficient inventory for decrease')
+      }
+
+      if (adjustmentType === 'increase') {
+        const { currentStock, totalReceived } = await getProductInventoryTotals(productId)
+        const availableToIncrease = Math.max(totalReceived - currentStock, 0)
+
+        if (currentStock + qty > totalReceived) {
+          throw new Error(`Inventory in stock cannot be more than inventory received. You can increase by at most ${availableToIncrease} unit${availableToIncrease === 1 ? '' : 's'}.`)
+        }
+      }
 
       const newQty = adjustmentType === 'increase'
         ? (existing?.quantity ?? 0) + qty

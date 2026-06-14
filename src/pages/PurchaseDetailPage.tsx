@@ -19,52 +19,45 @@ import { formatCurrency } from '@/lib/utils'
 import { toast } from 'sonner'
 import { logDashboardActivity } from '@/lib/audit'
 
-function toPounds(weight: number | null | undefined, unit: string | null | undefined): number {
-  const value = Number(weight)
-  if (!Number.isFinite(value) || value <= 0) return 0
+async function applyInventoryQuantityDelta(productId: string, warehouseLocationId: string, quantityDelta: number) {
+  const { data: existing, error: existingError } = await supabase
+    .from('inventory')
+    .select('id, quantity')
+    .eq('product_id', productId)
+    .eq('warehouse_location_id', warehouseLocationId)
+    .maybeSingle()
+  if (existingError) throw existingError
 
-  if (unit === 'kg') return value * 2.2046226218
-  if (unit === 'oz') return value / 16
-  if (unit === 'g') return value * 0.0022046226218
-  return value
-}
-
-function getUnitWeightLb(item: any): number {
-  return toPounds(item.product?.weight, item.product?.weight_unit)
-}
-
-function getLineWeightLb(item: any): number {
-  return getUnitWeightLb(item) * item.quantity
-}
-
-function canAllocateByWeight(items: any[] | undefined): boolean {
-  return !!items?.length && items.every((item) => getUnitWeightLb(item) > 0)
-}
-
-function getAdditionalCostAllocation(item: any, items: any[] | undefined, totalAdditional: number): number {
-  if (!items?.length || totalAdditional <= 0) return 0
-
-  if (canAllocateByWeight(items)) {
-    const totalWeight = items.reduce((sum, lineItem) => sum + getLineWeightLb(lineItem), 0)
-    if (totalWeight > 0) return totalAdditional * (getLineWeightLb(item) / totalWeight)
+  const nextQuantity = (existing?.quantity ?? 0) + quantityDelta
+  if (nextQuantity < 0) {
+    throw new Error('Insufficient inventory to update this completed allocation')
   }
 
-  const totalQty = items.reduce((sum, lineItem) => sum + lineItem.quantity, 0)
-  return totalQty > 0 ? totalAdditional * (item.quantity / totalQty) : 0
+  if (!existing) {
+    if (nextQuantity === 0) return
+
+    const { error: insertError } = await supabase
+      .from('inventory')
+      .insert({ product_id: productId, warehouse_location_id: warehouseLocationId, quantity: nextQuantity })
+    if (insertError) throw insertError
+    return
+  }
+
+  if (nextQuantity === 0) {
+    const { error: deleteError } = await supabase.from('inventory').delete().eq('id', existing.id)
+    if (deleteError) throw deleteError
+    return
+  }
+
+  const { error: updateError } = await supabase
+    .from('inventory')
+    .update({ quantity: nextQuantity })
+    .eq('id', existing.id)
+  if (updateError) throw updateError
 }
 
-function getAdditionalCostPerUnit(item: any, items: any[] | undefined, totalAdditional: number): number {
-  if (!item.quantity) return 0
-  return getAdditionalCostAllocation(item, items, totalAdditional) / item.quantity
-}
-
-function getTaxCostPerUnit(item: any): number {
-  if (!item.quantity) return 0
-  return (Number(item.tax_amount) || 0) / item.quantity
-}
-
-function getLandedCostPerUnit(item: any, items: any[] | undefined, totalAdditional: number): number {
-  return (Number(item.unit_cost) || 0) + getTaxCostPerUnit(item) + getAdditionalCostPerUnit(item, items, totalAdditional)
+function getLandedTaxAmount(lineItem: any) {
+  return lineItem.tax_recoverability === 'non_recoverable' ? Number(lineItem.tax_amount) || 0 : 0
 }
 
 export function PurchaseDetailPage() {
@@ -120,7 +113,7 @@ export function PurchaseDetailPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('purchase_line_items')
-        .select('*, product:products(name, sku, weight, weight_unit)')
+        .select('*, product:products(name, sku)')
         .eq('purchase_id', id!)
       if (error) throw error
       const seen = new Set<string>()
@@ -165,13 +158,39 @@ export function PurchaseDetailPage() {
         throw new Error('Purchase must have at least one line item')
       }
 
-      // Unit landed cost = unit cost + tax per unit + allocated additional cost per unit.
-      // When every product has a unit weight, additional costs are allocated by shipment weight.
+      // ── LANDED COST CALCULATION (WEIGHT-BASED) ──
+      // Landed Cost = (Unit Cost + Portion of Additional Costs) / Quantity
+      // 
+      // Step 1: Calculate total quantity across all line items
+      // Step 2: For each line item, calculate its weight as a % of total quantity
+      // Step 3: Allocate additional costs proportionally to each line item
+      //         Additional Cost Allocation = Total Additional Costs × (Line Item Quantity / Total Quantity)
+      // Step 4: Calculate total landed unit cost
+      //         Landed Unit Cost = (Unit Cost × Quantity + non-recoverable tax + Allocated Additional Cost) / Quantity
+      //
+      // Example:
+      // - Line Item 1: 100 units @ $10 = $1,000 (54.05% of 185 total qty)
+      // - Line Item 2: 20 units @ $30 = $600 (10.81% of 185 total qty)
+      // - Line Item 3: 65 units @ $15 = $975 (35.14% of 185 total qty)
+      // - Additional Costs: $300 (customs + shipping)
+      // - Line Item 1 allocated: $300 × (100/185) = $162.16
+      // - Line Item 2 allocated: $300 × (20/185) = $32.43
+      // - Line Item 3 allocated: $300 × (65/185) = $105.41
+      // - Line Item 1 landed unit cost = ($1,000 + $162.16) / 100 = $11.62
+
+      const totalQty = lineItems.reduce((sum, li) => sum + li.quantity, 0)
       const totalAddCosts = additionalCosts?.reduce((sum, c) => sum + c.amount, 0) ?? 0
 
       // Update each line item with calculated landed cost
       for (const li of lineItems) {
-        const landedUnitCost = getLandedCostPerUnit(li, lineItems, totalAddCosts)
+        const weightPercent = totalQty > 0 ? li.quantity / totalQty : 0
+        
+        // Distribute additional costs proportionally based on quantity weight
+        const allocatedCosts = totalAddCosts * weightPercent
+        const landedTax = getLandedTaxAmount(li)
+        
+        // Landed unit cost = (subtotal + allocated costs) / quantity
+        const landedUnitCost = (li.unit_cost * li.quantity + landedTax + allocatedCosts) / li.quantity
 
         await supabase
           .from('purchase_line_items')
@@ -336,13 +355,9 @@ export function PurchaseDetailPage() {
   const updateLineItem = useMutation({
     mutationFn: async ({ itemId, quantity, unitCost, taxPercent, taxRecoverability, oldQuantity, oldUnitCost, oldTaxPercent, oldTaxRecoverability }: { itemId: string; quantity: number; unitCost: number; taxPercent: number; taxRecoverability: 'recoverable' | 'non_recoverable'; oldQuantity: number; oldUnitCost: number; oldTaxPercent: number; oldTaxRecoverability: string }) => {
       const taxAmount = Number(((quantity * unitCost * taxPercent) / 100).toFixed(2))
-      const totalAddCosts = additionalCosts?.reduce((sum, cost) => sum + cost.amount, 0) ?? 0
-      const updatedItem = { ...editingLineItem, quantity, unit_cost: unitCost, tax_amount: taxAmount }
-      const updatedLineItems = (lineItems ?? []).map((item) => item.id === itemId ? updatedItem : item)
-      const landedUnitCost = getLandedCostPerUnit(updatedItem, updatedLineItems, totalAddCosts)
       const { error } = await supabase
         .from('purchase_line_items')
-        .update({ quantity, unit_cost: unitCost, tax_percent: taxPercent, tax_amount: taxAmount, tax_recoverability: taxRecoverability, landed_unit_cost: landedUnitCost })
+        .update({ quantity, unit_cost: unitCost, tax_percent: taxPercent, tax_amount: taxAmount, tax_recoverability: taxRecoverability })
         .eq('id', itemId)
       if (error) throw error
       return { oldQuantity, oldUnitCost, oldTaxPercent, oldTaxRecoverability }
@@ -375,6 +390,32 @@ export function PurchaseDetailPage() {
 
   const deleteLineItem = useMutation({
     mutationFn: async ({ itemId, itemData }: { itemId: string; itemData: any }) => {
+      if (purchase?.status === 'completed') {
+        if (!user) throw new Error('User is required to update completed purchase inventory')
+
+        const { data: lineAllocations, error: allocationsError } = await supabase
+          .from('purchase_allocations')
+          .select('id, warehouse_location_id, quantity')
+          .eq('purchase_line_item_id', itemId)
+        if (allocationsError) throw allocationsError
+
+        for (const allocation of lineAllocations ?? []) {
+          await applyInventoryQuantityDelta(itemData.product_id, allocation.warehouse_location_id, -allocation.quantity)
+
+          const { error: movementError } = await supabase.from('inventory_movements').insert({
+            product_id: itemData.product_id,
+            source_location_id: allocation.warehouse_location_id,
+            quantity: allocation.quantity,
+            movement_type: 'adjustment_decrease',
+            reference_id: allocation.id,
+            reference_type: 'purchase_allocation',
+            user_id: user.id,
+            reason: `Deleted line item from purchase ${purchase.invoice_number}`,
+          })
+          if (movementError) throw movementError
+        }
+      }
+
       const { error } = await supabase.from('purchase_line_items').delete().eq('id', itemId)
       if (error) throw error
       return itemData
@@ -382,6 +423,8 @@ export function PurchaseDetailPage() {
     onSuccess: async (deletedItem) => {
       queryClient.invalidateQueries({ queryKey: ['purchase-line-items', id] })
       queryClient.invalidateQueries({ queryKey: ['purchase-allocations', id] })
+      queryClient.invalidateQueries({ queryKey: ['inventory'] })
+      queryClient.invalidateQueries({ queryKey: ['inventory-movements'] })
       if (user && purchase) {
         const productName = deletedItem.product?.name || 'Unknown Product'
         const productSku = deletedItem.product?.sku || ''
@@ -472,25 +515,29 @@ export function PurchaseDetailPage() {
   const canEdit = purchase.status === 'draft' || purchase.status === 'completed'
   const subtotal = lineItems?.reduce((sum, li) => sum + li.unit_cost * li.quantity, 0) ?? 0
   const totalTax = lineItems?.reduce((sum, li) => sum + li.tax_amount, 0) ?? 0
+  const totalLandedTax = lineItems?.reduce((sum, li) => sum + getLandedTaxAmount(li), 0) ?? 0
   const totalAdditional = additionalCosts?.reduce((sum, c) => sum + c.amount, 0) ?? 0
   
-  const totalShipmentWeightLb = lineItems?.reduce((sum, li) => sum + getLineWeightLb(li), 0) ?? 0
-  const usesWeightAllocation = canAllocateByWeight(lineItems) && totalShipmentWeightLb > 0
-  const shippingRatePerLb = usesWeightAllocation ? totalAdditional / totalShipmentWeightLb : 0
+  // Weight-based landed cost calculations
+  const totalQuantity = lineItems?.reduce((sum, li) => sum + li.quantity, 0) ?? 0
   
-  const getWeightPercent = (item: any) => {
-    if (!usesWeightAllocation || totalShipmentWeightLb === 0) return 0
-    return (getLineWeightLb(item) / totalShipmentWeightLb) * 100
+  // Function to get weight % for a line item based on quantity
+  const getWeightPercent = (itemQty: number) => {
+    if (totalQuantity === 0) return 0
+    return (itemQty / totalQuantity) * 100
   }
   
   // Function to get allocated additional cost for a line item
-  const getAllocatedAdditionalCost = (item: any) => {
-    return getAdditionalCostAllocation(item, lineItems, totalAdditional)
+  const getAllocatedAdditionalCost = (itemQty: number) => {
+    if (totalQuantity === 0) return 0
+    return totalAdditional * (itemQty / totalQuantity)
   }
   
   // Function to get total landed cost for a line item (including allocated costs)
   const getLineItemLandedCost = (item: any) => {
-    return getLandedCostPerUnit(item, lineItems, totalAdditional) * item.quantity
+    const baseLineTotal = item.unit_cost * item.quantity
+    const allocated = getAllocatedAdditionalCost(item.quantity)
+    return baseLineTotal + getLandedTaxAmount(item) + allocated
   }
   
   // Total landed cost across all items
@@ -498,9 +545,8 @@ export function PurchaseDetailPage() {
 
   // Unit landed cost: use stored value for completed purchases, calculate on-the-fly for draft
   const getUnitLandedCost = (item: any) => {
-    if (item.landed_unit_cost) return item.landed_unit_cost
     if (!item.quantity) return 0
-    return getLandedCostPerUnit(item, lineItems, totalAdditional)
+    return getLineItemLandedCost(item) / item.quantity
   }
 
   return (
@@ -763,10 +809,7 @@ export function PurchaseDetailPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{formatCurrency(totalLandedCost)}</div>
-            <p className="text-xs text-muted-foreground mt-1">{formatCurrency(subtotal + totalTax + totalAdditional)}</p>
-            {usesWeightAllocation && totalAdditional > 0 && (
-              <p className="text-xs text-muted-foreground mt-1">Additional cost rate: {formatCurrency(shippingRatePerLb)}/lb</p>
-            )}
+            <p className="text-xs text-muted-foreground mt-1">{formatCurrency(subtotal + totalLandedTax + totalAdditional)}</p>
           </CardContent>
         </Card>
       </div>
@@ -837,10 +880,10 @@ export function PurchaseDetailPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right text-sm">
-                      {usesWeightAllocation ? `${getWeightPercent(item).toFixed(2)}%` : '—'}
+                      {getWeightPercent(item.quantity).toFixed(2)}%
                     </TableCell>
                     <TableCell className="text-right">
-                      {formatCurrency(getAllocatedAdditionalCost(item))}
+                      {formatCurrency(getAllocatedAdditionalCost(item.quantity))}
                     </TableCell>
                     <TableCell className="text-right font-medium text-primary">
                       {formatCurrency(getUnitLandedCost(item))}
@@ -1468,7 +1511,7 @@ function AllocationSection({
   lineItem: any
   purchaseId: string
   invoiceNumber: string
-  purchaseStatus: string
+  purchaseStatus: 'draft' | 'completed'
   userId?: string
 }) {
   const [locationId, setLocationId] = useState('')
@@ -1495,100 +1538,44 @@ function AllocationSection({
   })
 
   const allocatedQty = existingAllocations?.reduce((sum, a) => sum + a.quantity, 0) ?? 0
-  const remainingQty = Math.max(0, lineItem.quantity - allocatedQty)
-  const defaultLocation =
-    locations?.find((location) => location.name.toLowerCase() === 'local storage') ??
-    locations?.[0]
-
-  async function isPurchaseCompletedForInventorySync() {
-    const { data, error } = await supabase
-      .from('purchases')
-      .select('status')
-      .eq('id', purchaseId)
-      .maybeSingle()
-    if (error) throw error
-    return (data?.status ?? purchaseStatus) === 'completed'
-  }
-
-  async function getLineAllocationTotals() {
-    const { data, error } = await supabase
-      .from('purchase_allocations')
-      .select('warehouse_location_id, quantity')
-      .eq('purchase_line_item_id', lineItem.id)
-    if (error) throw error
-
-    return (data ?? []).reduce((totals, allocation: any) => {
-      totals.set(
-        allocation.warehouse_location_id,
-        (totals.get(allocation.warehouse_location_id) ?? 0) + allocation.quantity
-      )
-      return totals
-    }, new Map<string, number>())
-  }
-
-  async function adjustInventoryQuantity(locationId: string, delta: number) {
-    if (delta === 0) return
-
-    const { data: inventory, error: inventoryError } = await supabase
-      .from('inventory')
-      .select('id, quantity')
-      .eq('product_id', lineItem.product_id)
-      .eq('warehouse_location_id', locationId)
-      .maybeSingle()
-    if (inventoryError) throw inventoryError
-
-    if (inventory) {
-      const nextQty = inventory.quantity + delta
-      const { error } = nextQty <= 0
-        ? await supabase.from('inventory').delete().eq('id', inventory.id)
-        : await supabase.from('inventory').update({ quantity: nextQty }).eq('id', inventory.id)
-      if (error) throw error
-      return
-    }
-
-    if (delta > 0) {
-      const { error } = await supabase
-        .from('inventory')
-        .insert({ product_id: lineItem.product_id, warehouse_location_id: locationId, quantity: delta })
-      if (error) throw error
-      return
-    }
-
-    throw new Error('No inventory record found for this allocation location')
-  }
-
-  async function syncInventoryToAllocationDelta(previousTotals: Map<string, number>, nextTotals: Map<string, number>) {
-    if (!(await isPurchaseCompletedForInventorySync())) return
-
-    const locationIds = new Set([...previousTotals.keys(), ...nextTotals.keys()])
-    for (const syncLocationId of locationIds) {
-      await adjustInventoryQuantity(
-        syncLocationId,
-        (nextTotals.get(syncLocationId) ?? 0) - (previousTotals.get(syncLocationId) ?? 0)
-      )
-    }
-  }
+  const remainingQty = lineItem.quantity - allocatedQty
 
   const addAllocation = useMutation({
     mutationFn: async () => {
-      const qty = parseInt(quantity)
-      if (!Number.isFinite(qty) || qty <= 0) throw new Error('Allocation quantity must be greater than zero')
+      const qty = parseInt(quantity, 10)
+      if (!Number.isFinite(qty) || qty <= 0) throw new Error('Quantity must be positive')
       if (qty > remainingQty) throw new Error(`Cannot allocate more than remaining (${remainingQty})`)
-      const previousTotals = await getLineAllocationTotals()
+
       const { error } = await supabase.from('purchase_allocations').insert({
         purchase_line_item_id: lineItem.id,
         warehouse_location_id: locationId,
         quantity: qty,
       })
       if (error) throw error
-      const nextTotals = await getLineAllocationTotals()
-      await syncInventoryToAllocationDelta(previousTotals, nextTotals)
+
+      if (purchaseStatus === 'completed') {
+        if (!userId) throw new Error('User is required to update completed purchase inventory')
+
+        await applyInventoryQuantityDelta(lineItem.product_id, locationId, qty)
+
+        const { error: movementError } = await supabase.from('inventory_movements').insert({
+          product_id: lineItem.product_id,
+          destination_location_id: locationId,
+          quantity: qty,
+          movement_type: 'purchase_allocation',
+          reference_id: purchaseId,
+          reference_type: 'purchase',
+          user_id: userId,
+          reason: `Purchase ${invoiceNumber}`,
+        })
+        if (movementError) throw movementError
+      }
     },
     onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['allocations', lineItem.id] })
       queryClient.invalidateQueries({ queryKey: ['purchase-allocations', purchaseId] })
       queryClient.invalidateQueries({ queryKey: ['inventory'] })
-      queryClient.invalidateQueries({ queryKey: ['inventory-detail'] })
+      queryClient.invalidateQueries({ queryKey: ['inventory-movements'] })
       setQuantity('')
       setLocationId('')
       if (userId) {
@@ -1605,58 +1592,36 @@ function AllocationSection({
     onError: (error) => toast.error(error.message),
   })
 
-  const allocateFully = useMutation({
-    mutationFn: async () => {
-      if (!defaultLocation) throw new Error('No warehouse location available')
-      if (remainingQty <= 0) throw new Error('This line item is already fully allocated')
-
-      const previousTotals = await getLineAllocationTotals()
-      const { error } = await supabase.from('purchase_allocations').insert({
-        purchase_line_item_id: lineItem.id,
-        warehouse_location_id: defaultLocation.id,
-        quantity: remainingQty,
-      })
-      if (error) throw error
-      const nextTotals = await getLineAllocationTotals()
-      await syncInventoryToAllocationDelta(previousTotals, nextTotals)
-    },
-    onSuccess: async () => {
-      queryClient.invalidateQueries({ queryKey: ['allocations', lineItem.id] })
-      queryClient.invalidateQueries({ queryKey: ['purchase-allocations', purchaseId] })
-      queryClient.invalidateQueries({ queryKey: ['inventory'] })
-      queryClient.invalidateQueries({ queryKey: ['inventory-detail'] })
-      if (userId) {
-        await logDashboardActivity({
-          entityType: 'purchase_allocation',
-          action: 'create',
-          userId,
-          entityId: purchaseId,
-          description: `Fully allocated line item to ${defaultLocation?.name ?? 'warehouse'} on invoice ${invoiceNumber}`,
-          metadata: {
-            product_name: lineItem.product?.name,
-            warehouse_location_id: defaultLocation?.id,
-            quantity: remainingQty,
-          },
-        })
-      }
-      toast.success('Line item fully allocated')
-    },
-    onError: (error) => toast.error(error.message),
-  })
-
   const deleteAllocation = useMutation({
     mutationFn: async (allocation: any) => {
-      const previousTotals = await getLineAllocationTotals()
+      if (purchaseStatus === 'completed') {
+        if (!userId) throw new Error('User is required to update completed purchase inventory')
+
+        await applyInventoryQuantityDelta(lineItem.product_id, allocation.warehouse_location_id, -allocation.quantity)
+      }
+
       const { error } = await supabase.from('purchase_allocations').delete().eq('id', allocation.id)
       if (error) throw error
-      const nextTotals = await getLineAllocationTotals()
-      await syncInventoryToAllocationDelta(previousTotals, nextTotals)
+
+      if (purchaseStatus === 'completed') {
+        const { error: movementError } = await supabase.from('inventory_movements').insert({
+          product_id: lineItem.product_id,
+          source_location_id: allocation.warehouse_location_id,
+          quantity: allocation.quantity,
+          movement_type: 'adjustment_decrease',
+          reference_id: allocation.id,
+          reference_type: 'purchase_allocation',
+          user_id: userId!,
+          reason: `Removed allocation from purchase ${invoiceNumber}`,
+        })
+        if (movementError) throw movementError
+      }
     },
     onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ['allocations', lineItem.id] })
       queryClient.invalidateQueries({ queryKey: ['purchase-allocations', purchaseId] })
       queryClient.invalidateQueries({ queryKey: ['inventory'] })
-      queryClient.invalidateQueries({ queryKey: ['inventory-detail'] })
+      queryClient.invalidateQueries({ queryKey: ['inventory-movements'] })
       if (userId) {
         await logDashboardActivity({
           entityType: 'purchase_allocation',
@@ -1671,158 +1636,25 @@ function AllocationSection({
     onError: (error) => toast.error(error.message),
   })
 
-  const updateAllocationQuantity = useMutation({
-    mutationFn: async ({ allocationId, previousQty, nextQty }: { allocationId: string; previousQty: number; nextQty: number }) => {
-      if (!Number.isFinite(nextQty) || nextQty <= 0) throw new Error('Allocation quantity must be greater than zero')
-
-      const allocatedExcludingThis = allocatedQty - previousQty
-      const maxForThisAllocation = lineItem.quantity - allocatedExcludingThis
-      if (nextQty > maxForThisAllocation) {
-        throw new Error(`Cannot allocate more than line item quantity (${lineItem.quantity})`)
-      }
-
-      const previousTotals = await getLineAllocationTotals()
-      const { error } = await supabase
-        .from('purchase_allocations')
-        .update({ quantity: nextQty })
-        .eq('id', allocationId)
-      if (error) throw error
-
-      const nextTotals = await getLineAllocationTotals()
-      await syncInventoryToAllocationDelta(previousTotals, nextTotals)
-    },
-    onSuccess: async () => {
-      queryClient.invalidateQueries({ queryKey: ['allocations', lineItem.id] })
-      queryClient.invalidateQueries({ queryKey: ['purchase-allocations', purchaseId] })
-      queryClient.invalidateQueries({ queryKey: ['inventory'] })
-      queryClient.invalidateQueries({ queryKey: ['inventory-detail'] })
-      if (userId) {
-        await logDashboardActivity({
-          entityType: 'purchase_allocation',
-          action: 'update',
-          userId,
-          entityId: purchaseId,
-          description: `Updated warehouse allocation quantity on invoice ${invoiceNumber}`,
-          metadata: {
-            product_name: lineItem.product?.name,
-          },
-        })
-      }
-      toast.success('Allocation quantity updated')
-    },
-    onError: (error) => toast.error(error.message),
-  })
-
-  const updateAllocationLocation = useMutation({
-    mutationFn: async ({ allocationId, fromLocationId, toLocationId, qty }: { allocationId: string; fromLocationId: string; toLocationId: string; qty: number }) => {
-      if (fromLocationId === toLocationId) return
-
-      const previousTotals = await getLineAllocationTotals()
-      const { error } = await supabase
-        .from('purchase_allocations')
-        .update({ warehouse_location_id: toLocationId })
-        .eq('id', allocationId)
-      if (error) throw error
-
-      const nextTotals = new Map(previousTotals)
-      nextTotals.set(fromLocationId, (nextTotals.get(fromLocationId) ?? 0) - qty)
-      nextTotals.set(toLocationId, (nextTotals.get(toLocationId) ?? 0) + qty)
-      await syncInventoryToAllocationDelta(previousTotals, nextTotals)
-    },
-    onSuccess: async () => {
-      queryClient.invalidateQueries({ queryKey: ['allocations', lineItem.id] })
-      queryClient.invalidateQueries({ queryKey: ['purchase-allocations', purchaseId] })
-      queryClient.invalidateQueries({ queryKey: ['inventory'] })
-      queryClient.invalidateQueries({ queryKey: ['inventory-detail'] })
-      if (userId) {
-        await logDashboardActivity({
-          entityType: 'purchase_allocation',
-          action: 'update',
-          userId,
-          entityId: purchaseId,
-          description: `Moved warehouse allocation on invoice ${invoiceNumber}`,
-          metadata: {
-            product_name: lineItem.product?.name,
-          },
-        })
-      }
-      toast.success('Allocation location updated')
-    },
-    onError: (error) => toast.error(error.message),
-  })
-
   return (
     <div className="border rounded-md p-4 mb-4">
-      <div className="flex items-start justify-between gap-3 mb-2">
+      <div className="flex items-center justify-between mb-2">
         <div>
           <span className="font-medium">{lineItem.product?.name}</span>
           <span className="text-sm text-muted-foreground ml-2">
             ({allocatedQty}/{lineItem.quantity} allocated)
           </span>
         </div>
-        <div className="shrink-0">
-          {remainingQty === 0 ? (
-            <Badge variant="success">Fully Allocated</Badge>
-          ) : (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => allocateFully.mutate()}
-              disabled={allocateFully.isPending || !defaultLocation}
-            >
-              {allocateFully.isPending ? 'Allocating...' : 'Allocate fully'}
-            </Button>
-          )}
-        </div>
+        {remainingQty === 0 && <Badge variant="success">Fully Allocated</Badge>}
       </div>
 
       {existingAllocations && existingAllocations.length > 0 && (
-        <div className="mb-3 space-y-2">
+        <div className="mb-3 space-y-1">
           {existingAllocations.map((a: any) => (
-            <div key={a.id} className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between">
-              <div className="w-full sm:max-w-xs">
-                <Select
-                  value={a.warehouse_location_id}
-                  onValueChange={(nextLocationId) => updateAllocationLocation.mutate({
-                    allocationId: a.id,
-                    fromLocationId: a.warehouse_location_id,
-                    toLocationId: nextLocationId,
-                    qty: a.quantity,
-                  })}
-                  disabled={updateAllocationLocation.isPending}
-                >
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder="Warehouse" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {locations?.map((location) => (
-                      <SelectItem key={location.id} value={location.id}>{location.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="inline-flex items-center justify-end gap-2">
-                <Input
-                  type="number"
-                  min="1"
-                  max={lineItem.quantity - (allocatedQty - a.quantity)}
-                  defaultValue={a.quantity}
-                  className="h-9 w-24 text-right font-mono"
-                  disabled={updateAllocationQuantity.isPending}
-                  onBlur={(event) => {
-                    const nextQty = parseInt(event.target.value, 10)
-                    if (nextQty === a.quantity) return
-                    updateAllocationQuantity.mutate({
-                      allocationId: a.id,
-                      previousQty: a.quantity,
-                      nextQty,
-                    })
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') event.currentTarget.blur()
-                  }}
-                  onFocus={(event) => event.target.select()}
-                />
+            <div key={a.id} className="text-sm flex justify-between">
+              <span>{a.warehouse_location?.name}</span>
+              <div className="inline-flex items-center gap-2">
+                <span className="font-mono">{a.quantity}</span>
                 <Button
                   size="icon"
                   variant="ghost"
