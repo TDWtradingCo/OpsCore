@@ -12,6 +12,7 @@ import {
   LogOut,
   Menu,
   X,
+  ChevronDown,
   ClipboardList,
   MapPin,
   CircleDot,
@@ -25,17 +26,33 @@ import { Button } from '@/components/ui/button'
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Orders', href: '/orders', icon: ShoppingBag },
-  { name: 'Products', href: '/products', icon: Package },
-  { name: 'Inventory', href: '/inventory', icon: Warehouse },
-  { name: 'Purchases', href: '/purchases', icon: ShoppingCart },
-  { name: 'Tracking', href: '/tracking', icon: MapPin },
-  { name: 'Suppliers', href: '/suppliers', icon: Truck },
-  { name: 'Sales Channels', href: '/sales-channels', icon: BarChart3 },
+  {
+    name: 'Products',
+    href: '/products',
+    icon: Package,
+    children: [
+      { name: 'Inventory', href: '/inventory', icon: Warehouse },
+      { name: 'Purchases', href: '/purchases', icon: ShoppingCart },
+      { name: 'Tracking', href: '/tracking', icon: MapPin },
+      { name: 'Suppliers', href: '/suppliers', icon: Truck },
+    ],
+  },
+  {
+    name: 'Sales Channels',
+    href: '/sales-channels',
+    icon: BarChart3,
+    children: [
+      { name: 'Pricing', href: '/pricing', icon: DollarSign },
+      { name: 'Profitability', href: '/profitability', icon: TrendingUp },
+    ],
+  },
   { name: 'Activity Log', href: '/activity', icon: ClipboardList },
-  { name: 'Pricing', href: '/pricing', icon: DollarSign },
-  { name: 'Profitability', href: '/profitability', icon: TrendingUp },
   { name: 'Settings', href: '/settings', icon: Settings },
 ]
+
+function isPathActive(currentPath: string, href: string) {
+  return currentPath === href || (href !== '/' && currentPath.startsWith(`${href}/`))
+}
 
 export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -135,26 +152,57 @@ function SidebarContent({
       <nav className="flex-1 px-3 py-2 space-y-0.5 overflow-y-auto">
         <p className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-widest text-sidebar-foreground/40 font-semibold">Menu</p>
         {navigation.map((item) => {
-          const isActive = currentPath === item.href ||
-            (item.href !== '/' && currentPath.startsWith(item.href))
+          const isActive = isPathActive(currentPath, item.href)
+          const isChildActive = item.children?.some((child) => isPathActive(currentPath, child.href)) ?? false
+          const isExpanded = isActive || isChildActive
           return (
-            <Link
-              key={item.name}
-              to={item.href}
-              onClick={onNavigate}
-              className={cn(
-                'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200',
-                isActive
-                  ? 'bg-primary text-white shadow-glow'
-                  : 'text-sidebar-foreground/70 hover:text-white hover:bg-sidebar-muted'
+            <div key={item.name}>
+              <Link
+                to={item.href}
+                onClick={onNavigate}
+                className={cn(
+                  'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200',
+                  isActive
+                    ? 'bg-primary text-white shadow-glow'
+                    : isChildActive
+                      ? 'bg-sidebar-muted text-white'
+                      : 'text-sidebar-foreground/70 hover:text-white hover:bg-sidebar-muted'
+                )}
+              >
+                <item.icon className="h-[18px] w-[18px]" />
+                {item.name}
+                {item.children ? (
+                  <ChevronDown className={cn('ml-auto h-4 w-4 transition-transform duration-200', isExpanded ? 'rotate-0' : '-rotate-90')} />
+                ) : isActive && (
+                  <div className="ml-auto h-1.5 w-1.5 rounded-full bg-white" />
+                )}
+              </Link>
+
+              {item.children && isExpanded && (
+                <div className="mt-1 space-y-0.5 pl-7">
+                  {item.children.map((child) => {
+                    const childActive = isPathActive(currentPath, child.href)
+                    return (
+                      <Link
+                        key={child.name}
+                        to={child.href}
+                        onClick={onNavigate}
+                        className={cn(
+                          'flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-all duration-200',
+                          childActive
+                            ? 'bg-primary text-white shadow-glow'
+                            : 'text-sidebar-foreground/55 hover:text-white hover:bg-sidebar-muted'
+                        )}
+                      >
+                        <child.icon className="h-4 w-4" />
+                        {child.name}
+                        {childActive && <div className="ml-auto h-1.5 w-1.5 rounded-full bg-white" />}
+                      </Link>
+                    )
+                  })}
+                </div>
               )}
-            >
-              <item.icon className="h-[18px] w-[18px]" />
-              {item.name}
-              {isActive && (
-                <div className="ml-auto h-1.5 w-1.5 rounded-full bg-white" />
-              )}
-            </Link>
+            </div>
           )
         })}
       </nav>
