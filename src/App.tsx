@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from '@/contexts/AuthContext'
 import { DashboardLayout } from '@/components/layout/DashboardLayout'
+import { LandingPage } from '@/pages/LandingPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { ProductsPage } from '@/pages/ProductsPage'
@@ -42,17 +43,30 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+function PublicRoute({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth()
+
+  if (loading) return null
+
+  if (user) {
+    return <Navigate to="/dashboard" replace />
+  }
+
+  return <>{children}</>
+}
+
 export default function App() {
   return (
     <Routes>
-      <Route path="/login" element={<LoginPage />} />
+      <Route path="/" element={<PublicRoute><LandingPage /></PublicRoute>} />
+      <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
       <Route
         path="/*"
         element={
           <ProtectedRoute>
             <DashboardLayout>
               <Routes>
-                <Route path="/" element={<DashboardPage />} />
+                <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/orders" element={<OrdersPage />} />
                 <Route path="/products" element={<ProductsPage />} />
                 <Route path="/products/:id" element={<ProductDetailPage />} />
@@ -71,7 +85,7 @@ export default function App() {
                   <div className="flex flex-col items-center justify-center py-20">
                     <h1 className="text-4xl font-bold">404</h1>
                     <p className="text-muted-foreground mt-2">Page not found</p>
-                    <a href="/" className="mt-4 text-primary hover:underline">Go to Dashboard</a>
+                    <a href="/dashboard" className="mt-4 text-primary hover:underline">Go to Dashboard</a>
                   </div>
                 } />
               </Routes>

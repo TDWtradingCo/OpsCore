@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   Package,
   Warehouse,
@@ -24,7 +24,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { Button } from '@/components/ui/button'
 
 const navigation = [
-  { name: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Orders', href: '/orders', icon: ShoppingBag },
   {
     name: 'Products',
@@ -51,17 +51,24 @@ const navigation = [
 ]
 
 function isPathActive(currentPath: string, href: string) {
-  return currentPath === href || (href !== '/' && currentPath.startsWith(`${href}/`))
+  if (href === '/dashboard') return currentPath === '/dashboard'
+  return currentPath === href || currentPath.startsWith(`${href}/`)
 }
 
 export function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const location = useLocation()
+  const navigate = useNavigate()
   const { signOut, profile } = useAuth()
 
   useEffect(() => {
     setSidebarOpen(false)
   }, [location.pathname])
+
+  const handleSignOut = async () => {
+    await signOut()
+    navigate('/')
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -72,7 +79,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
           <div className="fixed inset-y-0 left-0 w-72 bg-sidebar shadow-2xl animate-slide-up">
             <SidebarContent
               currentPath={location.pathname}
-              onSignOut={signOut}
+              onSignOut={handleSignOut}
               profile={profile}
               onNavigate={() => setSidebarOpen(false)}
               onClose={() => setSidebarOpen(false)}
@@ -85,7 +92,7 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
       {/* Desktop sidebar */}
       <div className="hidden lg:fixed lg:inset-y-0 lg:flex lg:w-72 lg:flex-col">
         <div className="flex flex-col flex-grow bg-sidebar">
-          <SidebarContent currentPath={location.pathname} onSignOut={signOut} profile={profile} />
+          <SidebarContent currentPath={location.pathname} onSignOut={handleSignOut} profile={profile} />
         </div>
       </div>
 
