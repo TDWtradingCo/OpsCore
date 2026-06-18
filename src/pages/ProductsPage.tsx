@@ -120,6 +120,8 @@ export function ProductsPage() {
   function handleExport() {
     if (!products?.length) return
     exportToCSV(products, 'products', [
+      { key: 'id', header: 'ID' },
+      { key: 'product_code', header: 'Product Code' },
       { key: 'name', header: 'Name' },
       { key: 'sku', header: 'SKU' },
       { key: 'status', header: 'Status' },
@@ -539,13 +541,20 @@ export function ProductsPage() {
                     const selectedProd = products?.find((p) => p.id === productId)
                     if (selectedProd) {
                       exportToCSV([selectedProd], `product-${selectedProd.sku || selectedProd.id}`, [
+                        { key: 'id', header: 'ID' },
+                        { key: 'product_code', header: 'Product Code' },
                         { key: 'name', header: 'Name' },
                         { key: 'sku', header: 'SKU' },
-                        { key: 'product_code', header: 'Product ID' },
                         { key: 'status', header: 'Status' },
                         { key: 'brand', header: 'Brand' },
                         { key: 'upc_gtin', header: 'UPC/GTIN' },
                         { key: 'weight', header: 'Weight' },
+                        { key: 'weight_unit', header: 'Weight Unit' },
+                        { key: 'length', header: 'Length' },
+                        { key: 'width', header: 'Width' },
+                        { key: 'height', header: 'Height' },
+                        { key: 'dimension_unit', header: 'Dimension Unit' },
+                        { key: 'image_url', header: 'Image URL' },
                       ])
                       toast.success('Product exported')
                     }
