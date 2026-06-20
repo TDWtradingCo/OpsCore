@@ -5,10 +5,12 @@ An internal operational platform for centralized product management, inventory t
 ## Tech Stack
 
 - **Frontend:** React 18 + TypeScript + Vite
+- **Backend Server:** NestJS
 - **Styling:** Tailwind CSS + shadcn/ui components
 - **State/Data:** TanStack React Query + Supabase JS
 - **Validation:** Zod + React Hook Form
-- **Backend:** Supabase (PostgreSQL + Row Level Security + Auth)
+- **Database/Auth:** Supabase (PostgreSQL + Row Level Security + Auth)
+- **Backend Hosting:** Railway
 
 ## Getting Started
 
@@ -25,6 +27,12 @@ Copy `.env.example` to `.env` and fill in your Supabase credentials:
 ```
 VITE_SUPABASE_URL=https://your-project.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
+
+PORT=3001
+FRONTEND_URL=http://localhost:5173
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```
 
 ### 3. Set up database
@@ -36,6 +44,39 @@ Run the migration in `supabase/migrations/001_initial_schema.sql` against your S
 ```bash
 npm run dev
 ```
+
+### 5. Start NestJS backend server
+
+Install the backend package once, then run it from the root workspace:
+
+```bash
+npm --prefix backend install
+npm run dev:api
+```
+
+The API listens on `http://localhost:3001/api` by default.
+
+Useful backend endpoints:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/health` | Railway health check and Supabase configuration status |
+| `GET /api/me` | Verifies a Supabase bearer token and returns the authenticated user |
+
+### 6. Deploy backend to Railway
+
+This repo includes `railway.json`, so Railway can deploy the NestJS backend from the repo root.
+
+Set these Railway variables:
+
+```bash
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+FRONTEND_URL=https://your-frontend-domain
+```
+
+Railway will run `cd backend && npm ci && npm run build` and start the server with `cd backend && npm run start:prod`.
 
 ## Modules
 
