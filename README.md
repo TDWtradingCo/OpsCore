@@ -87,7 +87,7 @@ railway variables --set "SUPABASE_SERVICE_ROLE_KEY=your-service-role-key"
 railway variables --set "FRONTEND_URL=https://your-frontend-domain"
 ```
 
-The repo pins Node 20 through `package.json` engines and `.nvmrc` because recent `@supabase/supabase-js` versions warn on Node 18 and below.
+The repo pins Node 22 through `package.json` engines, `.nvmrc`, and `nixpacks.toml` because the deployed Supabase client path expects the Node 22 runtime on Railway.
 
 Railway will run `cd backend && npm ci --include=dev && npm run build` and start the server with `cd backend && npm run start:prod`.
 
