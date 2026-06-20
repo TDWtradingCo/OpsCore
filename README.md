@@ -76,7 +76,20 @@ SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 FRONTEND_URL=https://your-frontend-domain
 ```
 
-Railway will run `cd backend && npm ci && npm run build` and start the server with `cd backend && npm run start:prod`.
+These must be set on the Railway backend service itself. Netlify frontend variables and local `.env` values are not automatically available inside the Railway container.
+
+In Railway, add them from **Project -> backend service -> Variables**, or use the CLI with your real values:
+
+```bash
+railway variables --set "SUPABASE_URL=https://your-project.supabase.co"
+railway variables --set "SUPABASE_ANON_KEY=your-anon-key"
+railway variables --set "SUPABASE_SERVICE_ROLE_KEY=your-service-role-key"
+railway variables --set "FRONTEND_URL=https://your-frontend-domain"
+```
+
+The repo pins Node 20 through `package.json` engines and `.nvmrc` because recent `@supabase/supabase-js` versions warn on Node 18 and below.
+
+Railway will run `cd backend && npm ci --include=dev && npm run build` and start the server with `cd backend && npm run start:prod`.
 
 ## Modules
 

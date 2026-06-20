@@ -2,6 +2,10 @@
   "name": "tdot-dashboard-backend",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=20 <23",
+    "npm": ">=10"
+  },
   "scripts": {
     "build": "nest build",
     "start": "nest start",
