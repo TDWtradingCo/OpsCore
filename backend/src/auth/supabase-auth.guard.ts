@@ -21,7 +21,12 @@ export class SupabaseAuthGuard implements CanActivate {
       throw new UnauthorizedException('Missing Supabase bearer token')
     }
 
-    request.user = await this.supabase.getUserFromToken(token)
+    try {
+      request.user = await this.supabase.getUserFromToken(token)
+    } catch {
+      throw new UnauthorizedException('Invalid Supabase bearer token')
+    }
+
     return true
   }
 }

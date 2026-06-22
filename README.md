@@ -30,9 +30,11 @@ VITE_SUPABASE_ANON_KEY=your-anon-key
 
 PORT=3001
 FRONTEND_URL=http://localhost:5173
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+SUPABASE_AUTH_URL=https://your-frontend-auth-project.supabase.co
+SUPABASE_AUTH_ANON_KEY=your-frontend-auth-anon-key
+SUPABASE_URL=https://your-backend-data-project.supabase.co
+SUPABASE_ANON_KEY=your-backend-data-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-backend-data-service-role-key
 ```
 
 ### 3. Set up database
@@ -70,9 +72,9 @@ Useful backend endpoints:
 | `POST /api/product/:id/variant` | Creates a variant for an API product |
 | `PATCH /api/variant/:id` / `PUT /api/variant/:id` | Updates an API product variant |
 
-Product API routes require the same Supabase bearer token style as `/api/me`. They are backed by `product_api.products` and `product_api.variants`; apply `supabase/migrations/011_create_api_products_and_variants.sql` to the target Supabase project before using them.
+Product API routes require the same Supabase bearer token style as `/api/me`. The bearer token is validated against the frontend auth Supabase project configured by `SUPABASE_AUTH_URL` / `SUPABASE_AUTH_ANON_KEY`, or by the local `VITE_SUPABASE_*` fallback. Product API data is stored in the separate backend Supabase project configured by `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`.
 
-Because these tables live outside `public`, add `product_api` to the Supabase project's exposed schemas if the REST API returns a schema/cache error for these routes.
+The Product API endpoints use backend data tables `public.product_api_products` and `public.product_api_variants`; apply `supabase/migrations/012_create_public_product_api_tables.sql` to the backend data Supabase project before using them.
 
 ### 6. Deploy backend to Railway
 
@@ -81,9 +83,11 @@ This repo includes `railway.json`, so Railway can deploy the NestJS backend from
 Set these Railway variables:
 
 ```bash
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+SUPABASE_AUTH_URL=https://your-frontend-auth-project.supabase.co
+SUPABASE_AUTH_ANON_KEY=your-frontend-auth-anon-key
+SUPABASE_URL=https://your-backend-data-project.supabase.co
+SUPABASE_ANON_KEY=your-backend-data-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-backend-data-service-role-key
 FRONTEND_URL=https://your-frontend-domain
 ```
 
@@ -92,9 +96,11 @@ These must be set on the Railway backend service itself. Netlify frontend variab
 In Railway, add them from **Project -> backend service -> Variables**, or use the CLI with your real values:
 
 ```bash
-railway variables --set "SUPABASE_URL=https://your-project.supabase.co"
-railway variables --set "SUPABASE_ANON_KEY=your-anon-key"
-railway variables --set "SUPABASE_SERVICE_ROLE_KEY=your-service-role-key"
+railway variables --set "SUPABASE_AUTH_URL=https://your-frontend-auth-project.supabase.co"
+railway variables --set "SUPABASE_AUTH_ANON_KEY=your-frontend-auth-anon-key"
+railway variables --set "SUPABASE_URL=https://your-backend-data-project.supabase.co"
+railway variables --set "SUPABASE_ANON_KEY=your-backend-data-anon-key"
+railway variables --set "SUPABASE_SERVICE_ROLE_KEY=your-backend-data-service-role-key"
 railway variables --set "FRONTEND_URL=https://your-frontend-domain"
 ```
 

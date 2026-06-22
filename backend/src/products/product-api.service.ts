@@ -9,10 +9,9 @@ import {
   UpdateApiProductVariantDto,
 } from './dto/product-api.dto'
 
-const API_SCHEMA = 'product_api'
-const PRODUCT_TABLE = 'products'
-const VARIANT_TABLE = 'variants'
-const PRODUCT_SELECT = '*, variants(*)'
+const PRODUCT_TABLE = 'product_api_products'
+const VARIANT_TABLE = 'product_api_variants'
+const PRODUCT_SELECT = '*'
 const VARIANT_SELECT = '*'
 
 type ApiProductRow = {
@@ -63,7 +62,7 @@ export class ProductApiService {
   constructor(private readonly supabase: SupabaseService) {}
 
   async listProducts() {
-    const { data, error } = await this.productsTable()
+    const { data: products, error } = await this.productsTable()
       .select(PRODUCT_SELECT)
       .order('product_code_integer', { ascending: true })
 
@@ -71,7 +70,14 @@ export class ProductApiService {
       this.throwSupabaseError(error)
     }
 
-    return (data ?? []).map((product) => this.mapProduct(product as ApiProductRow))
+    const variantsByProduct = await this.getVariantsByProductIds((products ?? []).map((product) => product.id as string))
+
+    return (products ?? []).map((product) =>
+      this.mapProduct({
+        ...(product as ApiProductRow),
+        variants: variantsByProduct.get(product.id as string) ?? [],
+      }),
+    )
   }
 
   async getProduct(id: string) {
@@ -88,7 +94,12 @@ export class ProductApiService {
       throw new NotFoundException('Product not found')
     }
 
-    return this.mapProduct(data as ApiProductRow)
+    const variantsByProduct = await this.getVariantsByProductIds([id])
+
+    return this.mapProduct({
+      ...(data as ApiProductRow),
+      variants: variantsByProduct.get(id) ?? [],
+    })
   }
 
   async createProduct(dto: CreateApiProductDto) {
@@ -102,7 +113,7 @@ export class ProductApiService {
       this.throwSupabaseError(error)
     }
 
-    return this.mapProduct(data as ApiProductRow)
+    return this.mapProduct({ ...(data as ApiProductRow), variants: [] })
   }
 
   async updateProduct(id: string, dto: UpdateApiProductDto) {
@@ -122,7 +133,12 @@ export class ProductApiService {
       throw new NotFoundException('Product not found')
     }
 
-    return this.mapProduct(data as ApiProductRow)
+    const variantsByProduct = await this.getVariantsByProductIds([id])
+
+    return this.mapProduct({
+      ...(data as ApiProductRow),
+      variants: variantsByProduct.get(id) ?? [],
+    })
   }
 
   async getVariant(id: string) {
@@ -195,12 +211,37 @@ export class ProductApiService {
     }
   }
 
+  private async getVariantsByProductIds(productIds: string[]) {
+    const variantsByProduct = new Map<string, ApiProductVariantRow[]>()
+
+    if (productIds.length === 0) {
+      return variantsByProduct
+    }
+
+    const { data, error } = await this.variantsTable()
+      .select(VARIANT_SELECT)
+      .in('product_id', productIds)
+      .order('variant_code', { ascending: true })
+
+    if (error) {
+      this.throwSupabaseError(error)
+    }
+
+    for (const variant of (data ?? []) as ApiProductVariantRow[]) {
+      const existing = variantsByProduct.get(variant.product_id) ?? []
+      existing.push(variant)
+      variantsByProduct.set(variant.product_id, existing)
+    }
+
+    return variantsByProduct
+  }
+
   private productsTable() {
-    return this.supabase.client.schema(API_SCHEMA).from(PRODUCT_TABLE)
+    return this.supabase.client.from(PRODUCT_TABLE)
   }
 
   private variantsTable() {
-    return this.supabase.client.schema(API_SCHEMA).from(VARIANT_TABLE)
+    return this.supabase.client.from(VARIANT_TABLE)
   }
 
   private toProductPayload(dto: CreateApiProductDto | UpdateApiProductDto): ProductPayload {

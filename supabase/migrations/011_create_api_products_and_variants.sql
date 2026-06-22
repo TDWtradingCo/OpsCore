@@ -106,3 +106,33 @@ CREATE POLICY "Authenticated can update API product variants"
   ON product_api.variants FOR UPDATE TO authenticated USING (true);
 CREATE POLICY "Authenticated can delete API product variants"
   ON product_api.variants FOR DELETE TO authenticated USING (true);
+
+-- Public API-facing views let Supabase REST access these records without
+-- exposing the internal product_api schema in Data API settings.
+CREATE OR REPLACE VIEW public.product_api_products AS
+SELECT
+  id,
+  product_code_integer,
+  name,
+  brand,
+  image_url,
+  created_at,
+  updated_at
+FROM product_api.products;
+
+CREATE OR REPLACE VIEW public.product_api_variants AS
+SELECT
+  id,
+  product_id,
+  variant_code,
+  variant_type,
+  variant_value,
+  condition,
+  quantity,
+  image_url,
+  created_at,
+  updated_at
+FROM product_api.variants;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.product_api_products TO authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.product_api_variants TO authenticated, service_role;
