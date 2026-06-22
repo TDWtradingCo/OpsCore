@@ -62,6 +62,17 @@ Useful backend endpoints:
 |----------|-------------|
 | `GET /api/health` | Railway health check and Supabase configuration status |
 | `GET /api/me` | Verifies a Supabase bearer token and returns the authenticated user |
+| `GET /api/products` | Retrieves API products with variants |
+| `GET /api/product/:id` | Retrieves one API product with variants |
+| `POST /api/product` | Creates an API product |
+| `PATCH /api/product/:id` / `PUT /api/product/:id` | Updates an API product |
+| `GET /api/variant/:id` | Retrieves one API product variant |
+| `POST /api/product/:id/variant` | Creates a variant for an API product |
+| `PATCH /api/variant/:id` / `PUT /api/variant/:id` | Updates an API product variant |
+
+Product API routes require the same Supabase bearer token style as `/api/me`. They are backed by `product_api.products` and `product_api.variants`; apply `supabase/migrations/011_create_api_products_and_variants.sql` to the target Supabase project before using them.
+
+Because these tables live outside `public`, add `product_api` to the Supabase project's exposed schemas if the REST API returns a schema/cache error for these routes.
 
 ### 6. Deploy backend to Railway
 

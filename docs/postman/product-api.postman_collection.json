@@ -1,0 +1,499 @@
+{
+  "info": {
+    "_postman_id": "51b100f5-5085-43e8-9515-5d4c2eac2f5d",
+    "name": "Tdot Dashboard - Product API",
+    "description": "Postman collection for testing the NestJS Product API endpoints. Run `Auth / Login With Supabase Password` to generate `accessToken`, then run product or variant requests.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          ""
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          ""
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "health"
+          ]
+        },
+        "description": "Checks whether the backend is running and whether Supabase is configured."
+      },
+      "response": []
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login With Supabase Password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Supabase login succeeded', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "",
+                  "const auth = pm.response.json();",
+                  "if (auth.access_token) {",
+                  "  pm.collectionVariables.set('accessToken', auth.access_token);",
+                  "}",
+                  "if (auth.refresh_token) {",
+                  "  pm.collectionVariables.set('refreshToken', auth.refresh_token);",
+                  "}",
+                  "if (auth.user && auth.user.id) {",
+                  "  pm.collectionVariables.set('supabaseUserId', auth.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{supabaseAnonKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{authEmail}}\",\n  \"password\": \"{{authPassword}}\"\n}"
+            },
+            "url": {
+              "raw": "{{supabaseUrl}}/auth/v1/token?grant_type=password",
+              "host": [
+                "{{supabaseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "v1",
+                "token"
+              ],
+              "query": [
+                {
+                  "key": "grant_type",
+                  "value": "password"
+                }
+              ]
+            },
+            "description": "Logs in with Supabase email/password auth and stores `accessToken`, `refreshToken`, and `supabaseUserId` as collection variables."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Current Supabase User",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/me",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "me"
+          ]
+        },
+        "description": "Validates the Supabase bearer token stored in `accessToken`."
+      },
+      "response": []
+    },
+    {
+      "name": "Products",
+      "item": [
+        {
+          "name": "List Products",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "products"
+              ]
+            },
+            "description": "Returns all API products with their variants."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Product",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Product was created', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "",
+                  "const product = pm.response.json();",
+                  "if (product.id) {",
+                  "  pm.collectionVariables.set('productId', product.id);",
+                  "}",
+                  "if (product.productCodeInteger !== undefined) {",
+                  "  pm.collectionVariables.set('productCodeInteger', String(product.productCodeInteger));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productCodeInteger\": 0,\n  \"name\": \"2 Pack Waitley 20V 5.0Ah Replacement Battery Compatible with Dewalt\",\n  \"brand\": \"Waitley\",\n  \"imageUrl\": \"https://example.com/product-image.jpg\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/product",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "product"
+              ]
+            },
+            "description": "Creates one API product. The test script stores the returned `id` as `productId`."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Product By ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/product/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "product",
+                "{{productId}}"
+              ]
+            },
+            "description": "Returns one API product and its variants. Run `Create Product` first or manually set `productId`."
+          },
+          "response": []
+        },
+        {
+          "name": "Patch Product",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"brand\": \"Waitley\",\n  \"imageUrl\": \"https://example.com/product-image-updated.jpg\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/product/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "product",
+                "{{productId}}"
+              ]
+            },
+            "description": "Partially updates one API product. Run `Create Product` first or manually set `productId`."
+          },
+          "response": []
+        },
+        {
+          "name": "Put Product",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productCodeInteger\": 0,\n  \"name\": \"2 Pack Waitley 20V 5.0Ah Replacement Battery Compatible with Dewalt\",\n  \"brand\": \"Waitley\",\n  \"imageUrl\": \"https://example.com/product-image-updated.jpg\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/product/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "product",
+                "{{productId}}"
+              ]
+            },
+            "description": "Updates one API product through the PUT route. Run `Create Product` first or manually set `productId`."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Variants",
+      "item": [
+        {
+          "name": "Create Variant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Variant was created', function () {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "",
+                  "const variant = pm.response.json();",
+                  "if (variant.id) {",
+                  "  pm.collectionVariables.set('variantId', variant.id);",
+                  "}",
+                  "if (variant.variantCode !== undefined) {",
+                  "  pm.collectionVariables.set('variantCode', String(variant.variantCode));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"variantCode\": 0,\n  \"variantType\": \"Colour\",\n  \"variantValue\": \"Blue\",\n  \"condition\": \"New\",\n  \"quantity\": 100,\n  \"imageUrl\": \"https://example.com/variant-image.jpg\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/product/{{productId}}/variant",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "product",
+                "{{productId}}",
+                "variant"
+              ]
+            },
+            "description": "Creates one variant for `productId`. Run `Create Product` first or manually set `productId`. The test script stores the returned `id` as `variantId`."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Variant By ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/variant/{{variantId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "variant",
+                "{{variantId}}"
+              ]
+            },
+            "description": "Returns one variant. Run `Create Variant` first or manually set `variantId`."
+          },
+          "response": []
+        },
+        {
+          "name": "Patch Variant",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 200,\n  \"condition\": \"Open Box\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/variant/{{variantId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "variant",
+                "{{variantId}}"
+              ]
+            },
+            "description": "Partially updates one variant. Run `Create Variant` first or manually set `variantId`."
+          },
+          "response": []
+        },
+        {
+          "name": "Put Variant",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"variantCode\": 0,\n  \"variantType\": \"Colour\",\n  \"variantValue\": \"Blue\",\n  \"condition\": \"Open Box\",\n  \"quantity\": 200,\n  \"imageUrl\": \"https://example.com/variant-image-updated.jpg\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/variant/{{variantId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "variant",
+                "{{variantId}}"
+              ]
+            },
+            "description": "Updates one variant through the PUT route. Run `Create Variant` first or manually set `variantId`."
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3001",
+      "type": "string"
+    },
+    {
+      "key": "supabaseUrl",
+      "value": "https://tifgylzlgfcjyvhhuweb.supabase.co",
+      "type": "string"
+    },
+    {
+      "key": "supabaseAnonKey",
+      "value": "paste-supabase-anon-key-here",
+      "type": "string"
+    },
+    {
+      "key": "authEmail",
+      "value": "paste-login-email-here",
+      "type": "string"
+    },
+    {
+      "key": "authPassword",
+      "value": "paste-login-password-here",
+      "type": "string"
+    },
+    {
+      "key": "accessToken",
+      "value": "paste-supabase-user-access-token-here",
+      "type": "string"
+    },
+    {
+      "key": "refreshToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "supabaseUserId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "productId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "variantId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "productCodeInteger",
+      "value": "0",
+      "type": "string"
+    },
+    {
+      "key": "variantCode",
+      "value": "0",
+      "type": "string"
+    }
+  ]
+}

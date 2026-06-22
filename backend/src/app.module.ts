@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common'
 import { ConfigModule } from '@nestjs/config'
 import { AppController } from './app.controller'
+import { ProductApiModule } from './products/product-api.module'
 import { SupabaseModule } from './supabase/supabase.module'
 
 @Module({
@@ -9,6 +10,7 @@ import { SupabaseModule } from './supabase/supabase.module'
       isGlobal: true,
       envFilePath: ['.env.local', '.env', '../.env.local', '../.env'],
     }),
+    ProductApiModule,
     SupabaseModule,
   ],
   controllers: [AppController],
