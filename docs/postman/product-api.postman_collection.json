@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "51b100f5-5085-43e8-9515-5d4c2eac2f5d",
     "name": "Tdot Dashboard - Product API",
-    "description": "Postman collection for testing the NestJS Product API endpoints. Run `Auth / Login With Supabase Password` to generate `accessToken`, then run product or variant requests.",
+    "description": "Postman collection for testing the NestJS Product API endpoints. Run `Auth / Login With Supabase Password` to generate `accessToken`, then run product or variant requests. Each request includes either a request body or an example response body for integration reference.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -56,7 +56,21 @@
         },
         "description": "Checks whether the backend is running and whether Supabase is configured."
       },
-      "response": []
+      "response": [
+        {
+          "name": "Example 200",
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": "{\n  \"status\": \"ok\",\n  \"service\": \"tdot-dashboard-backend\",\n  \"supabase\": {\n    \"configured\": true,\n    \"serviceRoleEnabled\": true\n  }\n}"
+        }
+      ]
     },
     {
       "name": "Auth",
@@ -125,7 +139,21 @@
             },
             "description": "Logs in with Supabase email/password auth and stores `accessToken`, `refreshToken`, and `supabaseUserId` as collection variables."
           },
-          "response": []
+          "response": [
+            {
+              "name": "Example 200",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"access_token\": \"<access-token>\",\n  \"refresh_token\": \"<refresh-token>\",\n  \"token_type\": \"bearer\",\n  \"expires_in\": 3600,\n  \"user\": {\n    \"id\": \"01e5ba90-6f7e-4c57-83b8-ae132819a371\",\n    \"email\": \"user@example.com\"\n  }\n}"
+            }
+          ]
         }
       ]
     },
@@ -146,7 +174,21 @@
         },
         "description": "Validates the Supabase bearer token stored in `accessToken`."
       },
-      "response": []
+      "response": [
+        {
+          "name": "Example 200",
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": "{\n  \"user\": {\n    \"id\": \"01e5ba90-6f7e-4c57-83b8-ae132819a371\",\n    \"role\": \"authenticated\",\n    \"email\": \"user@example.com\"\n  }\n}"
+        }
+      ]
     },
     {
       "name": "Products",
@@ -168,11 +210,34 @@
             },
             "description": "Returns all API products with their variants."
           },
-          "response": []
+          "response": [
+            {
+              "name": "Example 200",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "[\n  {\n    \"id\": \"550939b7-7c0e-48f8-83df-f1e2638f9eae\",\n    \"productCodeInteger\": 1782125321,\n    \"name\": \"API Test Product 1782125321\",\n    \"brand\": \"Waitley Updated\",\n    \"imageUrl\": \"https://example.com/product-image-put.jpg\",\n    \"createdAt\": \"2026-06-22T10:48:44.799496+00:00\",\n    \"updatedAt\": \"2026-06-22T10:48:47.413577+00:00\",\n    \"variants\": [\n      {\n        \"id\": \"375ecaa9-fb51-4351-9780-7e270128bfa9\",\n        \"productId\": \"550939b7-7c0e-48f8-83df-f1e2638f9eae\",\n        \"variantCode\": 0,\n        \"variantType\": \"Colour\",\n        \"variantValue\": \"Blue\",\n        \"condition\": \"Open Box\",\n        \"quantity\": 200,\n        \"imageUrl\": \"https://example.com/variant-image-put.jpg\",\n        \"createdAt\": \"2026-06-22T10:48:48.896875+00:00\",\n        \"updatedAt\": \"2026-06-22T10:48:50.15102+00:00\"\n      }\n    ]\n  }\n]"
+            }
+          ]
         },
         {
           "name": "Create Product",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('productCodeInteger', String(Math.floor(Date.now() / 1000)));"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -203,7 +268,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"productCodeInteger\": 0,\n  \"name\": \"2 Pack Waitley 20V 5.0Ah Replacement Battery Compatible with Dewalt\",\n  \"brand\": \"Waitley\",\n  \"imageUrl\": \"https://example.com/product-image.jpg\"\n}"
+              "raw": "{\n  \"productCodeInteger\": {{productCodeInteger}},\n  \"name\": \"2 Pack Waitley 20V 5.0Ah Replacement Battery Compatible with Dewalt\",\n  \"brand\": \"Waitley\",\n  \"imageUrl\": \"https://example.com/product-image.jpg\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/product",
@@ -217,7 +282,21 @@
             },
             "description": "Creates one API product. The test script stores the returned `id` as `productId`."
           },
-          "response": []
+          "response": [
+            {
+              "name": "Example 201",
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"id\": \"550939b7-7c0e-48f8-83df-f1e2638f9eae\",\n  \"productCodeInteger\": 1782125321,\n  \"name\": \"API Test Product 1782125321\",\n  \"brand\": \"Waitley\",\n  \"imageUrl\": \"https://example.com/product-image.jpg\",\n  \"createdAt\": \"2026-06-22T10:48:44.799496+00:00\",\n  \"updatedAt\": \"2026-06-22T10:48:44.799496+00:00\",\n  \"variants\": []\n}"
+            }
+          ]
         },
         {
           "name": "Get Product By ID",
@@ -237,7 +316,21 @@
             },
             "description": "Returns one API product and its variants. Run `Create Product` first or manually set `productId`."
           },
-          "response": []
+          "response": [
+            {
+              "name": "Example 200",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"id\": \"550939b7-7c0e-48f8-83df-f1e2638f9eae\",\n  \"productCodeInteger\": 1782125321,\n  \"name\": \"API Test Product 1782125321\",\n  \"brand\": \"Waitley Updated\",\n  \"imageUrl\": \"https://example.com/product-image-put.jpg\",\n  \"createdAt\": \"2026-06-22T10:48:44.799496+00:00\",\n  \"updatedAt\": \"2026-06-22T10:48:47.413577+00:00\",\n  \"variants\": [\n    {\n      \"id\": \"375ecaa9-fb51-4351-9780-7e270128bfa9\",\n      \"productId\": \"550939b7-7c0e-48f8-83df-f1e2638f9eae\",\n      \"variantCode\": 0,\n      \"variantType\": \"Colour\",\n      \"variantValue\": \"Blue\",\n      \"condition\": \"Open Box\",\n      \"quantity\": 200,\n      \"imageUrl\": \"https://example.com/variant-image-put.jpg\",\n      \"createdAt\": \"2026-06-22T10:48:48.896875+00:00\",\n      \"updatedAt\": \"2026-06-22T10:48:50.15102+00:00\"\n    }\n  ]\n}"
+            }
+          ]
         },
         {
           "name": "Patch Product",
@@ -266,7 +359,21 @@
             },
             "description": "Partially updates one API product. Run `Create Product` first or manually set `productId`."
           },
-          "response": []
+          "response": [
+            {
+              "name": "Example 200",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"id\": \"550939b7-7c0e-48f8-83df-f1e2638f9eae\",\n  \"productCodeInteger\": 1782125321,\n  \"name\": \"API Test Product 1782125321\",\n  \"brand\": \"Waitley\",\n  \"imageUrl\": \"https://example.com/product-image-updated.jpg\",\n  \"createdAt\": \"2026-06-22T10:48:44.799496+00:00\",\n  \"updatedAt\": \"2026-06-22T10:48:46.713287+00:00\",\n  \"variants\": []\n}"
+            }
+          ]
         },
         {
           "name": "Put Product",
@@ -280,7 +387,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"productCodeInteger\": 0,\n  \"name\": \"2 Pack Waitley 20V 5.0Ah Replacement Battery Compatible with Dewalt\",\n  \"brand\": \"Waitley\",\n  \"imageUrl\": \"https://example.com/product-image-updated.jpg\"\n}"
+              "raw": "{\n  \"productCodeInteger\": {{productCodeInteger}},\n  \"name\": \"2 Pack Waitley 20V 5.0Ah Replacement Battery Compatible with Dewalt\",\n  \"brand\": \"Waitley\",\n  \"imageUrl\": \"https://example.com/product-image-updated.jpg\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/product/{{productId}}",
@@ -295,7 +402,21 @@
             },
             "description": "Updates one API product through the PUT route. Run `Create Product` first or manually set `productId`."
           },
-          "response": []
+          "response": [
+            {
+              "name": "Example 200",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"id\": \"550939b7-7c0e-48f8-83df-f1e2638f9eae\",\n  \"productCodeInteger\": 1782125321,\n  \"name\": \"API Test Product 1782125321\",\n  \"brand\": \"Waitley Updated\",\n  \"imageUrl\": \"https://example.com/product-image-put.jpg\",\n  \"createdAt\": \"2026-06-22T10:48:44.799496+00:00\",\n  \"updatedAt\": \"2026-06-22T10:48:47.413577+00:00\",\n  \"variants\": []\n}"
+            }
+          ]
         }
       ]
     },
@@ -335,7 +456,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"variantCode\": 0,\n  \"variantType\": \"Colour\",\n  \"variantValue\": \"Blue\",\n  \"condition\": \"New\",\n  \"quantity\": 100,\n  \"imageUrl\": \"https://example.com/variant-image.jpg\"\n}"
+              "raw": "{\n  \"variantCode\": {{variantCode}},\n  \"variantType\": \"Colour\",\n  \"variantValue\": \"Blue\",\n  \"condition\": \"New\",\n  \"quantity\": 100,\n  \"imageUrl\": \"https://example.com/variant-image.jpg\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/product/{{productId}}/variant",
@@ -351,7 +472,21 @@
             },
             "description": "Creates one variant for `productId`. Run `Create Product` first or manually set `productId`. The test script stores the returned `id` as `variantId`."
           },
-          "response": []
+          "response": [
+            {
+              "name": "Example 201",
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"id\": \"375ecaa9-fb51-4351-9780-7e270128bfa9\",\n  \"productId\": \"550939b7-7c0e-48f8-83df-f1e2638f9eae\",\n  \"variantCode\": 0,\n  \"variantType\": \"Colour\",\n  \"variantValue\": \"Blue\",\n  \"condition\": \"New\",\n  \"quantity\": 100,\n  \"imageUrl\": \"https://example.com/variant-image.jpg\",\n  \"createdAt\": \"2026-06-22T10:48:48.896875+00:00\",\n  \"updatedAt\": \"2026-06-22T10:48:48.896875+00:00\"\n}"
+            }
+          ]
         },
         {
           "name": "Get Variant By ID",
@@ -371,7 +506,21 @@
             },
             "description": "Returns one variant. Run `Create Variant` first or manually set `variantId`."
           },
-          "response": []
+          "response": [
+            {
+              "name": "Example 200",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"id\": \"375ecaa9-fb51-4351-9780-7e270128bfa9\",\n  \"productId\": \"550939b7-7c0e-48f8-83df-f1e2638f9eae\",\n  \"variantCode\": 0,\n  \"variantType\": \"Colour\",\n  \"variantValue\": \"Blue\",\n  \"condition\": \"New\",\n  \"quantity\": 100,\n  \"imageUrl\": \"https://example.com/variant-image.jpg\",\n  \"createdAt\": \"2026-06-22T10:48:48.896875+00:00\",\n  \"updatedAt\": \"2026-06-22T10:48:48.896875+00:00\"\n}"
+            }
+          ]
         },
         {
           "name": "Patch Variant",
@@ -400,7 +549,21 @@
             },
             "description": "Partially updates one variant. Run `Create Variant` first or manually set `variantId`."
           },
-          "response": []
+          "response": [
+            {
+              "name": "Example 200",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"id\": \"375ecaa9-fb51-4351-9780-7e270128bfa9\",\n  \"productId\": \"550939b7-7c0e-48f8-83df-f1e2638f9eae\",\n  \"variantCode\": 0,\n  \"variantType\": \"Colour\",\n  \"variantValue\": \"Blue\",\n  \"condition\": \"Open Box\",\n  \"quantity\": 200,\n  \"imageUrl\": \"https://example.com/variant-image.jpg\",\n  \"createdAt\": \"2026-06-22T10:48:48.896875+00:00\",\n  \"updatedAt\": \"2026-06-22T10:48:49.739918+00:00\"\n}"
+            }
+          ]
         },
         {
           "name": "Put Variant",
@@ -414,7 +577,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"variantCode\": 0,\n  \"variantType\": \"Colour\",\n  \"variantValue\": \"Blue\",\n  \"condition\": \"Open Box\",\n  \"quantity\": 200,\n  \"imageUrl\": \"https://example.com/variant-image-updated.jpg\"\n}"
+              "raw": "{\n  \"variantCode\": {{variantCode}},\n  \"variantType\": \"Colour\",\n  \"variantValue\": \"Blue\",\n  \"condition\": \"Open Box\",\n  \"quantity\": 200,\n  \"imageUrl\": \"https://example.com/variant-image-updated.jpg\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/variant/{{variantId}}",
@@ -429,7 +592,21 @@
             },
             "description": "Updates one variant through the PUT route. Run `Create Variant` first or manually set `variantId`."
           },
-          "response": []
+          "response": [
+            {
+              "name": "Example 200",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"id\": \"375ecaa9-fb51-4351-9780-7e270128bfa9\",\n  \"productId\": \"550939b7-7c0e-48f8-83df-f1e2638f9eae\",\n  \"variantCode\": 0,\n  \"variantType\": \"Colour\",\n  \"variantValue\": \"Blue\",\n  \"condition\": \"Open Box\",\n  \"quantity\": 200,\n  \"imageUrl\": \"https://example.com/variant-image-put.jpg\",\n  \"createdAt\": \"2026-06-22T10:48:48.896875+00:00\",\n  \"updatedAt\": \"2026-06-22T10:48:50.15102+00:00\"\n}"
+            }
+          ]
         }
       ]
     }
